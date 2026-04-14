@@ -1,88 +1,37 @@
-# HiveExecute — Execute Intent Engine
+# HiveExecute
 
-**Platform #12** | The pre-transaction brain of the Hive Civilization.
+**Intent Execution Engine — MCP Server**
 
-Single atomic endpoint that becomes the default pre-transaction layer for ALL agent-to-agent commerce. One call = intent interpretation + provider selection + compliance check + payment routing + execution + proof + memory.
+HiveExecute is a Model Context Protocol (MCP) server that resolves and executes agent intents — transfers, swaps, multi-hop settlements, and complex transaction graphs — for autonomous AI agents on Base L2.
 
-## Core Endpoint
+## MCP Integration
 
-### POST /v1/execute_intent
+HiveExecute supports MCP-compatible tool discovery and intent execution for autonomous agents:
 
-Single atomic call that:
-1. Validates identity + budget (HiveTrust + HiveBank)
-2. Interprets intent into executable action type
-3. Checks compliance (HiveLaw)
-4. Selects optimal provider + route
-5. Executes transaction
-6. Generates proof (SHA256 hash)
-7. Stores memory (HiveMind)
+- **Intent Submission** — `POST /v1/execute_intent` — Submit intents for resolution and execution
+- **Intent Status** — `GET /v1/execute_intent/:id` — Query intent execution state
+- **Statistics** — `GET /v1/execute_intent/stats` — Execution volume, success rates, and throughput
 
-```json
-{
-  "did": "did:hive:xxx",
-  "intent": "compute_job",
-  "constraints": { "max_cost": 100, "max_latency_ms": 5000, "jurisdiction": "US-CA" },
-  "budget": 500,
-  "metadata": {}
-}
-```
+### Capabilities
 
-## Supported Intents (Phase 1)
+| Capability | Description |
+|------------|-------------|
+| Intent Resolution | Parse and resolve complex agent intents into executable transactions |
+| Multi-Hop Execution | Route transactions through multiple intermediate agents |
+| Atomic Settlement | All-or-nothing execution with automatic rollback on failure |
+| Real-Time Metrics | Execution volume, success rate, and throughput tracking |
 
-| Intent | Description | Services Used |
-|--------|-------------|---------------|
-| `compute_job` | Route to compute providers | HiveForge, HiveClear |
-| `contract_settlement` | Create contract + settle | HiveLaw, HiveClear, HiveBank |
-| `payment_transfer` | Vault-to-vault transfer | HiveBank, HiveClear |
+## Features
 
-## Supporting Endpoints
+- **Intent Declaration** — Agents declare what they want; the engine figures out how
+- **Multi-Hop Routing** — Automatic pathfinding through the agent network
+- **Atomic Execution** — Complete transaction graphs execute or roll back atomically
+- **Volume Tracking** — Real-time execution metrics and success rates
 
-- `GET /v1/execute_intent/history/{did}` — Execution history for agent
-- `GET /v1/execute_intent/stats` — Platform-wide statistics
-- `GET /v1/execute_intent/providers` — Available providers by intent type
-- `GET /health` — Service health check
-- `GET /` — Discovery document
+## Architecture
 
-## Authentication
+Built on Node.js with Express. Part of the [Hive Civilization](https://hiveciv.com) — an autonomous agent economy on Base L2.
 
-- **x402 Payment**: Include `X-Payment` header with payment proof
-- **Internal Key**: Include `x-hive-internal-key` header for service-to-service calls
+## License
 
-## Platform Fee
-
-0.35% of transaction value on every successful execution.
-
-## Provider Scoring
-
-Providers are scored by: price (40%), reputation (30%), latency (20%), jurisdiction match (10%).
-
-## Cross-Service Integration
-
-| Service | Purpose |
-|---------|---------|
-| HiveTrust | DID validation + reputation |
-| HiveBank | Balance checks + fund transfers |
-| HiveLaw | Compliance verification |
-| HiveClear | Settlement submission |
-| HiveForge | Provider discovery + compute routing |
-| HiveMind | Execution memory storage |
-
-## Environment Variables
-
-```
-PORT=3001
-HIVE_INTERNAL_KEY=
-HIVETRUST_URL=https://hivetrust.onrender.com
-HIVEBANK_URL=https://hivebank.onrender.com
-HIVELAW_URL=https://hivelaw.onrender.com
-HIVECLEAR_URL=https://hiveclear.onrender.com
-HIVEFORGE_URL=https://hiveforge-lhu4.onrender.com
-HIVEMIND_URL=https://hivemind-1-52cw.onrender.com
-```
-
-## Run
-
-```bash
-npm install
-npm start
-```
+Proprietary — Hive Civilization
