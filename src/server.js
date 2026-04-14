@@ -142,45 +142,42 @@ app.get('/.well-known/ai-plugin.json', (_req, res) => {
   });
 });
 
-// A2A Agent Card (Google A2A spec)
+// A2A Agent Card (A2A Protocol v0.3.0)
 const agentCard = {
-    name: 'HiveExecute',
-    description: 'Atomic intent execution engine. Submit a single intent and the engine handles provider selection, compliance verification, payment routing, execution, proof generation, and memory storage in one atomic call. Supports compute_job, contract_settlement, and payment_transfer intents.',
-    url: 'https://hive-execute.onrender.com',
-    version: '1.0.0',
-    protocol_version: 'a2a/1.0',
-    capabilities: [
-      {
-        name: 'atomic_intent_execution',
-        description: 'Execute intents atomically with all-or-nothing guarantees across provider selection, compliance, payment, and proof generation',
-      },
-      {
-        name: 'provider_routing',
-        description: 'Score and select optimal providers based on price, reputation, latency, and jurisdiction matching',
-      },
-      {
-        name: 'compliance_verification',
-        description: 'Verify intent compliance with HiveLaw autonomous arbitration before execution',
-      },
-      {
-        name: 'proof_generation',
-        description: 'Generate SHA256 execution proofs for audit trails and replay protection',
-      },
-    ],
-    authentication: {
-      schemes: ['x402', 'api-key'],
-      credentials_url: 'https://hivegate.onrender.com/v1/gate/onboard',
+  protocolVersion: '0.3.0',
+  name: 'ExecuteIntent',
+  description: 'Intent routing engine that resolves agent intents (payment, settlement, compute) to optimal execution paths with automatic cost optimization and savings tracking.',
+  url: 'https://hive-execute.onrender.com',
+  version: '1.0.0',
+  provider: { organization: 'Hive Agent IQ', url: 'https://www.hiveagentiq.com' },
+  capabilities: { streaming: false, pushNotifications: false },
+  defaultInputModes: ['application/json'],
+  defaultOutputModes: ['application/json'],
+  skills: [
+    {
+      id: 'intent-routing',
+      name: 'Intent Routing',
+      description: 'Submit intents (payment_transfer, contract_settlement, compute_job) and get optimal execution across Hive services',
+      tags: ['intent', 'routing', 'optimization', 'execution'],
+      inputModes: ['application/json'],
+      outputModes: ['application/json'],
     },
-    payment: {
-      protocol: 'x402',
-      currency: 'USDC',
-      network: 'base',
-      address: '0x78B3B3C356E89b5a69C488c6032509Ef4260B6bf',
+    {
+      id: 'cost-optimization',
+      name: 'Cost Optimization',
+      description: 'Automatic cost savings on cross-service transactions with savings tracking and analytics',
+      tags: ['cost', 'savings', 'optimization', 'analytics'],
+      inputModes: ['application/json'],
+      outputModes: ['application/json'],
     },
-    provider: {
-      organization: 'Hive Agent IQ',
-      url: 'https://www.hiveagentiq.com',
-    },
+  ],
+  authentication: { schemes: ['x402', 'api-key'] },
+  payment: {
+    protocol: 'x402',
+    currency: 'USDC',
+    network: 'base',
+    address: '0x78B3B3C356E89b5a69C488c6032509Ef4260B6bf',
+  },
 };
 
 app.get('/.well-known/agent-card.json', (_req, res) => res.json(agentCard));
