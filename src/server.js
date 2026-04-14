@@ -26,9 +26,17 @@ app.get('/health', (_req, res) => {
 app.get('/', (_req, res) => {
   res.json({
     name: 'HiveExecute',
+    tagline: 'Execute Intent Engine',
     version: '1.0.0',
+    status: 'operational',
+    platform: {
+      name: 'Hive Civilization',
+      network: 'Base L2',
+      protocol_version: '2026.1',
+      website: 'https://www.hiveagentiq.com',
+      documentation: 'https://docs.hiveagentiq.com',
+    },
     description: 'Execute Intent Engine — single atomic call for intent interpretation, provider selection, compliance check, payment routing, execution, proof generation, and memory storage.',
-    protocol: 'Hive Civilization Protocol',
     platform_number: 12,
     endpoints: {
       execute_intent: {
@@ -70,6 +78,8 @@ app.get('/', (_req, res) => {
         payment: 'X-Payment (x402 proof)',
         internal: 'x-hive-internal-key',
       },
+      payment_rail: 'USDC on Base L2',
+      discovery: 'GET /.well-known/ai-plugin.json',
     },
     pricing: {
       platform_fee: '0.35% of transaction value',
@@ -82,6 +92,94 @@ app.get('/', (_req, res) => {
       hiveclear: 'Settlement submission',
       hiveforge: 'Provider discovery + compute routing',
       hivemind: 'Execution memory storage',
+    },
+    sla: {
+      uptime_target: '99.9%',
+      p95_latency: '<300ms',
+      atomic_guarantee: 'all-or-nothing execution',
+    },
+    legal: {
+      terms_of_service: 'https://www.hiveagentiq.com/terms',
+      privacy_policy: 'https://www.hiveagentiq.com/privacy',
+      contact: 'protocol@hiveagentiq.com',
+    },
+    discovery: {
+      ai_plugin: '/.well-known/ai-plugin.json',
+      agent_card: '/.well-known/agent.json',
+    },
+    compliance: {
+      framework: 'Hive Compliance Protocol v2',
+      audit_trail: true,
+      execution_proofs: true,
+      governance: 'HiveLaw autonomous arbitration',
+    },
+  });
+});
+
+// AI Plugin manifest (OpenAI plugin format)
+app.get('/.well-known/ai-plugin.json', (_req, res) => {
+  res.json({
+    schema_version: 'v1',
+    name_for_human: 'HiveExecute — Intent Execution Engine',
+    name_for_model: 'hive_execute',
+    description_for_human: 'Atomic intent execution engine for the Hive Civilization. Submit a single intent and the engine handles provider selection, compliance verification, payment routing, execution, proof generation, and memory storage in one atomic call.',
+    description_for_model: 'Atomic intent execution engine. Submit a single intent and the engine handles provider selection, compliance verification, payment routing, execution, proof generation, and memory storage in one atomic call. Supports compute_job, contract_settlement, and payment_transfer intents. 0.35% fee on transaction value.',
+    auth: { type: 'none' },
+    api: {
+      type: 'openapi',
+      url: 'https://hive-execute.onrender.com/openapi.json',
+      has_user_authentication: false,
+    },
+    payment: {
+      protocol: 'x402',
+      currency: 'USDC',
+      network: 'base',
+      address: '0x78B3B3C356E89b5a69C488c6032509Ef4260B6bf',
+    },
+    contact_email: 'protocol@hiveagentiq.com',
+    legal_info_url: 'https://www.hiveagentiq.com/terms',
+  });
+});
+
+// A2A Agent Card (Google A2A spec)
+app.get('/.well-known/agent.json', (_req, res) => {
+  res.json({
+    name: 'HiveExecute',
+    description: 'Atomic intent execution engine. Submit a single intent and the engine handles provider selection, compliance verification, payment routing, execution, proof generation, and memory storage in one atomic call. Supports compute_job, contract_settlement, and payment_transfer intents.',
+    url: 'https://hive-execute.onrender.com',
+    version: '1.0.0',
+    protocol_version: 'a2a/1.0',
+    capabilities: [
+      {
+        name: 'atomic_intent_execution',
+        description: 'Execute intents atomically with all-or-nothing guarantees across provider selection, compliance, payment, and proof generation',
+      },
+      {
+        name: 'provider_routing',
+        description: 'Score and select optimal providers based on price, reputation, latency, and jurisdiction matching',
+      },
+      {
+        name: 'compliance_verification',
+        description: 'Verify intent compliance with HiveLaw autonomous arbitration before execution',
+      },
+      {
+        name: 'proof_generation',
+        description: 'Generate SHA256 execution proofs for audit trails and replay protection',
+      },
+    ],
+    authentication: {
+      schemes: ['x402', 'api-key'],
+      credentials_url: 'https://hivegate.onrender.com/v1/gate/onboard',
+    },
+    payment: {
+      protocol: 'x402',
+      currency: 'USDC',
+      network: 'base',
+      address: '0x78B3B3C356E89b5a69C488c6032509Ef4260B6bf',
+    },
+    provider: {
+      organization: 'Hive Agent IQ',
+      url: 'https://www.hiveagentiq.com',
     },
   });
 });
