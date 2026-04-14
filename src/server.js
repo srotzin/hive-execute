@@ -105,7 +105,8 @@ app.get('/', (_req, res) => {
     },
     discovery: {
       ai_plugin: '/.well-known/ai-plugin.json',
-      agent_card: '/.well-known/agent.json',
+      agent_card: '/.well-known/agent-card.json',
+      agent_card_legacy: '/.well-known/agent.json',
     },
     compliance: {
       framework: 'Hive Compliance Protocol v2',
@@ -142,8 +143,7 @@ app.get('/.well-known/ai-plugin.json', (_req, res) => {
 });
 
 // A2A Agent Card (Google A2A spec)
-app.get('/.well-known/agent.json', (_req, res) => {
-  res.json({
+const agentCard = {
     name: 'HiveExecute',
     description: 'Atomic intent execution engine. Submit a single intent and the engine handles provider selection, compliance verification, payment routing, execution, proof generation, and memory storage in one atomic call. Supports compute_job, contract_settlement, and payment_transfer intents.',
     url: 'https://hive-execute.onrender.com',
@@ -181,8 +181,10 @@ app.get('/.well-known/agent.json', (_req, res) => {
       organization: 'Hive Agent IQ',
       url: 'https://www.hiveagentiq.com',
     },
-  });
-});
+};
+
+app.get('/.well-known/agent-card.json', (_req, res) => res.json(agentCard));
+app.get('/.well-known/agent.json', (_req, res) => res.json(agentCard));
 
 // Routes
 app.use(executeRouter);
