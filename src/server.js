@@ -150,7 +150,7 @@ const agentCard = {
   url: 'https://hive-execute.onrender.com',
   version: '1.0.0',
   provider: { organization: 'Hive Agent IQ', url: 'https://www.hiveagentiq.com' },
-  capabilities: { streaming: false, pushNotifications: false },
+  capabilities: { streaming: false, pushNotifications: false, stateTransitionHistory: false },
   defaultInputModes: ['application/json'],
   defaultOutputModes: ['application/json'],
   skills: [
@@ -161,6 +161,7 @@ const agentCard = {
       tags: ['intent', 'routing', 'optimization', 'execution'],
       inputModes: ['application/json'],
       outputModes: ['application/json'],
+      examples: [],
     },
     {
       id: 'cost-optimization',
@@ -169,6 +170,7 @@ const agentCard = {
       tags: ['cost', 'savings', 'optimization', 'analytics'],
       inputModes: ['application/json'],
       outputModes: ['application/json'],
+      examples: [],
     },
   ],
   authentication: { schemes: ['x402', 'api-key'] },
