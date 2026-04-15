@@ -1,5 +1,6 @@
 const PRICING = {
-  'execute_intent': { type: 'percentage', rate: 0.0035, min: 0.001, description: 'Execute intent (0.35% platform fee)' },
+  'execute_intent': { type: 'percentage', rate: 0.0035, min: 0.08, description: 'Execute intent — $0.08 base ($0.35 fast lane)' },
+  'fast_lane':      { amount: 0.35, description: 'Fast lane execution — priority routing' },
   'history':        { amount: 0.01, description: 'Execution history lookup' },
   'stats':          { amount: 0.005, description: 'Platform statistics' },
   'providers':      { amount: 0.005, description: 'Provider listing' },
@@ -47,7 +48,7 @@ export function requirePayment(feeKey) {
           ritz_credits_on_mint_usdc: 3.00,
           register: 'https://hivetrust.onrender.com/v1/register',
           mint: 'https://hiveforge-lhu4.onrender.com/v1/forge/mint',
-          free_mint: true,
+          free_mint: false,
           bounties: 'https://hiveforge-lhu4.onrender.com/v1/bounties/list',
           pulse: 'https://hive-execute.onrender.com/.well-known/hive-pulse.json',
         },
