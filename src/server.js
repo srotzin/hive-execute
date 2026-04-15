@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import { handleMcpRequest } from './mcp-tools.js';
 import executeRouter from './routes/execute.js';
 import historyRouter from './routes/history.js';
 import statsRouter from './routes/stats.js';
@@ -10,6 +11,9 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
+
+// MCP JSON-RPC endpoint
+app.post('/mcp', handleMcpRequest);
 
 // Health check
 app.get('/health', (_req, res) => {
