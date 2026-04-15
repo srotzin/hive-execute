@@ -1,6 +1,7 @@
-import { describe, it, before } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { initDb } from '../src/services/db.js';
 
 const BASE_URL = 'http://localhost:3099';
 const INTERNAL_KEY = 'hive_internal_125e04e071e8829be631ea0216dd4a0c9b707975fcecaf8c62c6a2ab43327d46';
@@ -45,6 +46,9 @@ describe('Fast Lanes API Endpoints', () => {
     // Set env vars before importing
     process.env.PORT = '3099';
     process.env.HIVE_INTERNAL_KEY = INTERNAL_KEY;
+
+    // Initialize DB before server starts
+    await initDb();
 
     // Dynamic import to use test port
     const mod = await import('../src/server.js');

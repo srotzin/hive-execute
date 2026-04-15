@@ -1,11 +1,5 @@
 import crypto from 'crypto';
-
-// In-memory cache: Map<agentDid, Map<intentHash, CacheEntry>>
-const agentCache = new Map();
-
-// Global tracking counters
-let totalRepeatExecutions = 0;
-let totalRepeatSavingsUsdc = 0;
+import { getOne, getAll, run } from './db.js';
 
 const MAX_ENTRIES_PER_AGENT = 1000;
 const MAX_TOTAL_ENTRIES = 50000;
@@ -36,90 +30,41 @@ function sortKeys(obj) {
 }
 
 /**
- * Get total entry count across all agents.
- */
-function getTotalEntryCount() {
-  let count = 0;
-  for (const agentMap of agentCache.values()) {
-    count += agentMap.size;
-  }
-  return count;
-}
-
-/**
- * Evict expired entries from a specific agent's cache.
- */
-function evictExpired(agentMap) {
-  const now = Date.now();
-  for (const [hash, entry] of agentMap) {
-    if (now - entry.timestamp > CACHE_TTL_MS) {
-      agentMap.delete(hash);
-    }
-  }
-}
-
-/**
- * Evict oldest entries if we exceed global max.
- */
-function evictGlobalIfNeeded() {
-  if (getTotalEntryCount() <= MAX_TOTAL_ENTRIES) return;
-
-  // Collect all entries with their agent key
-  const allEntries = [];
-  for (const [agentDid, agentMap] of agentCache) {
-    for (const [hash, entry] of agentMap) {
-      allEntries.push({ agentDid, hash, timestamp: entry.timestamp });
-    }
-  }
-
-  // Sort by timestamp ascending (oldest first) and remove excess
-  allEntries.sort((a, b) => a.timestamp - b.timestamp);
-  const toRemove = allEntries.length - MAX_TOTAL_ENTRIES;
-  for (let i = 0; i < toRemove; i++) {
-    const e = allEntries[i];
-    const agentMap = agentCache.get(e.agentDid);
-    if (agentMap) {
-      agentMap.delete(e.hash);
-      if (agentMap.size === 0) agentCache.delete(e.agentDid);
-    }
-  }
-}
-
-/**
  * Detect if this is a repeat execution.
  * Returns cached routing info if repeat, null otherwise.
  */
-export function detectRepeat(did, intentType, parameters) {
+export async function detectRepeat(did, intentType, parameters) {
   try {
     const intentHash = hashIntent(did, intentType, parameters);
-    const agentMap = agentCache.get(did);
-    if (!agentMap) return null;
+    const row = await getOne(`
+      SELECT * FROM repeat_cache WHERE agent_did = $1 AND intent_hash = $2
+    `, [did, intentHash]);
 
-    const entry = agentMap.get(intentHash);
-    if (!entry) return null;
+    if (!row) return null;
 
     // Check TTL
-    if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
-      agentMap.delete(intentHash);
+    if (Date.now() - row.updated_at > CACHE_TTL_MS) {
+      await run(`DELETE FROM repeat_cache WHERE agent_did = $1 AND intent_hash = $2`, [did, intentHash]);
       return null;
     }
 
     // Check threshold
-    if (entry.execution_count >= REPEAT_THRESHOLD) {
+    if (row.execution_count >= REPEAT_THRESHOLD) {
+      let routing = null;
+      try { routing = JSON.parse(row.routing); } catch { routing = null; }
       return {
         intent_hash: intentHash,
-        intent_type: entry.intent_type,
-        provider_did: entry.provider_did,
-        cost: entry.cost,
-        routing: entry.routing,
-        execution_count: entry.execution_count,
-        last_execution: new Date(entry.timestamp).toISOString(),
+        intent_type: row.intent_type,
+        provider_did: row.provider_did,
+        cost: row.cost,
+        routing,
+        execution_count: row.execution_count,
+        last_execution: new Date(parseInt(row.updated_at, 10)).toISOString(),
       };
     }
 
     return null;
   } catch {
-    // Never fail execution because of repeat detection
     return null;
   }
 }
@@ -127,46 +72,53 @@ export function detectRepeat(did, intentType, parameters) {
 /**
  * Record an execution in the repeat cache.
  */
-export function recordExecution(did, intentType, parameters, providerDid, cost, routing, executionId) {
+export async function recordExecution(did, intentType, parameters, providerDid, cost, routing, executionId) {
   try {
     const intentHash = hashIntent(did, intentType, parameters);
+    const now = Date.now();
 
-    if (!agentCache.has(did)) {
-      agentCache.set(did, new Map());
-    }
-    const agentMap = agentCache.get(did);
-
-    // Evict expired first
-    evictExpired(agentMap);
+    // Evict expired entries for this agent
+    const cutoff = now - CACHE_TTL_MS;
+    await run(`DELETE FROM repeat_cache WHERE agent_did = $1 AND updated_at < $2`, [did, cutoff]);
 
     // Check per-agent limit
-    if (agentMap.size >= MAX_ENTRIES_PER_AGENT && !agentMap.has(intentHash)) {
+    const countResult = await getOne(`SELECT COUNT(*) as c FROM repeat_cache WHERE agent_did = $1`, [did]);
+    const agentCount = parseInt(countResult?.c || 0, 10);
+
+    if (agentCount >= MAX_ENTRIES_PER_AGENT) {
       // Evict oldest entry for this agent
-      let oldestHash = null;
-      let oldestTime = Infinity;
-      for (const [hash, entry] of agentMap) {
-        if (entry.timestamp < oldestTime) {
-          oldestTime = entry.timestamp;
-          oldestHash = hash;
-        }
-      }
-      if (oldestHash) agentMap.delete(oldestHash);
+      await run(`
+        DELETE FROM repeat_cache WHERE agent_did = $1 AND intent_hash = (
+          SELECT intent_hash FROM repeat_cache WHERE agent_did = $1 ORDER BY updated_at ASC LIMIT 1
+        )
+      `, [did]);
     }
 
-    const existing = agentMap.get(intentHash);
-    agentMap.set(intentHash, {
-      intent_hash: intentHash,
-      intent_type: intentType,
-      provider_did: providerDid,
-      cost,
-      routing,
-      timestamp: Date.now(),
-      execution_count: (existing?.execution_count || 0) + 1,
-      last_execution_id: executionId,
-    });
+    // Upsert
+    await run(`
+      INSERT INTO repeat_cache (agent_did, intent_hash, intent_type, provider_did, cost, routing, updated_at, execution_count, last_execution_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8)
+      ON CONFLICT (agent_did, intent_hash) DO UPDATE SET
+        intent_type = $3,
+        provider_did = $4,
+        cost = $5,
+        routing = $6,
+        updated_at = $7,
+        execution_count = repeat_cache.execution_count + 1,
+        last_execution_id = $8
+    `, [did, intentHash, intentType, providerDid, cost, JSON.stringify(routing), now, executionId]);
 
     // Global eviction
-    evictGlobalIfNeeded();
+    const totalResult = await getOne(`SELECT COUNT(*) as c FROM repeat_cache`);
+    const totalCount = parseInt(totalResult?.c || 0, 10);
+    if (totalCount > MAX_TOTAL_ENTRIES) {
+      const excess = totalCount - MAX_TOTAL_ENTRIES;
+      await run(`
+        DELETE FROM repeat_cache WHERE ctid IN (
+          SELECT ctid FROM repeat_cache ORDER BY updated_at ASC LIMIT $1
+        )
+      `, [excess]);
+    }
   } catch {
     // Never fail because of cache update
   }
@@ -175,93 +127,101 @@ export function recordExecution(did, intentType, parameters, providerDid, cost, 
 /**
  * Get repeat stats for a specific agent.
  */
-export function getAgentRepeatStats(did) {
-  const agentMap = agentCache.get(did);
-  if (!agentMap) {
-    return { total_cached: 0, repeat_intents: 0, entries: [] };
-  }
+export async function getAgentRepeatStats(did) {
+  // Evict expired
+  const cutoff = Date.now() - CACHE_TTL_MS;
+  await run(`DELETE FROM repeat_cache WHERE agent_did = $1 AND updated_at < $2`, [did, cutoff]);
 
-  evictExpired(agentMap);
+  const rows = await getAll(`SELECT * FROM repeat_cache WHERE agent_did = $1 ORDER BY execution_count DESC`, [did]);
 
-  const entries = [];
   let repeatCount = 0;
-  for (const [, entry] of agentMap) {
-    if (entry.execution_count >= REPEAT_THRESHOLD) {
-      repeatCount++;
-    }
-    entries.push({
-      intent_hash: entry.intent_hash,
-      intent_type: entry.intent_type,
-      provider_did: entry.provider_did,
-      cost: entry.cost,
-      execution_count: entry.execution_count,
-      last_execution: new Date(entry.timestamp).toISOString(),
-    });
-  }
+  const entries = rows.map(r => {
+    if (r.execution_count >= REPEAT_THRESHOLD) repeatCount++;
+    return {
+      intent_hash: r.intent_hash,
+      intent_type: r.intent_type,
+      provider_did: r.provider_did,
+      cost: r.cost,
+      execution_count: r.execution_count,
+      last_execution: new Date(parseInt(r.updated_at, 10)).toISOString(),
+    };
+  });
 
   return {
-    total_cached: agentMap.size,
+    total_cached: rows.length,
     repeat_intents: repeatCount,
-    entries: entries.sort((a, b) => b.execution_count - a.execution_count),
+    entries,
   };
 }
 
 /**
  * Track repeat execution savings.
  */
-export function trackRepeatSavings(savingsUsdc) {
-  totalRepeatExecutions++;
-  totalRepeatSavingsUsdc += savingsUsdc;
+export async function trackRepeatSavings(savingsUsdc) {
+  await run(`
+    UPDATE repeat_stats SET
+      total_repeat_executions = total_repeat_executions + 1,
+      total_repeat_savings_usdc = total_repeat_savings_usdc + $1
+    WHERE id = 1
+  `, [savingsUsdc]);
 }
 
 /**
  * Get global repeat optimization stats.
  */
-export function getRepeatStats() {
-  let totalCached = 0;
-  let totalRepeats = 0;
-  const topPatterns = [];
+export async function getRepeatStats() {
+  // Evict expired across all agents
+  const cutoff = Date.now() - CACHE_TTL_MS;
+  await run(`DELETE FROM repeat_cache WHERE updated_at < $1`, [cutoff]);
 
-  for (const [did, agentMap] of agentCache) {
-    evictExpired(agentMap);
-    totalCached += agentMap.size;
-    for (const [, entry] of agentMap) {
-      if (entry.execution_count >= REPEAT_THRESHOLD) {
-        totalRepeats++;
-        topPatterns.push({
-          did,
-          intent_type: entry.intent_type,
-          execution_count: entry.execution_count,
-          cost: entry.cost,
-        });
-      }
-    }
-  }
+  const totalCachedResult = await getOne(`SELECT COUNT(*) as c FROM repeat_cache`);
+  const totalCached = parseInt(totalCachedResult?.c || 0, 10);
 
-  topPatterns.sort((a, b) => b.execution_count - a.execution_count);
+  const repeatRows = await getAll(`
+    SELECT agent_did, intent_type, execution_count, cost FROM repeat_cache
+    WHERE execution_count >= $1
+    ORDER BY execution_count DESC
+    LIMIT 10
+  `, [REPEAT_THRESHOLD]);
+
+  const totalRepeatsResult = await getOne(`SELECT COUNT(*) as c FROM repeat_cache WHERE execution_count >= $1`, [REPEAT_THRESHOLD]);
+  const totalRepeats = parseInt(totalRepeatsResult?.c || 0, 10);
+
+  const statsRow = await getOne(`SELECT * FROM repeat_stats WHERE id = 1`);
 
   return {
-    repeat_executions: totalRepeatExecutions,
-    repeat_savings_usdc: Math.round(totalRepeatSavingsUsdc * 10000) / 10000,
+    repeat_executions: statsRow?.total_repeat_executions || 0,
+    repeat_savings_usdc: Math.round((statsRow?.total_repeat_savings_usdc || 0) * 10000) / 10000,
     total_cached_intents: totalCached,
     total_repeat_patterns: totalRepeats,
-    top_patterns: topPatterns.slice(0, 10),
+    top_patterns: repeatRows.map(r => ({
+      did: r.agent_did,
+      intent_type: r.intent_type,
+      execution_count: r.execution_count,
+      cost: r.cost,
+    })),
   };
 }
 
 /**
  * Look up a cached execution by execution_id across all agents.
  */
-export function findCachedExecution(executionId) {
-  for (const [did, agentMap] of agentCache) {
-    for (const [, entry] of agentMap) {
-      if (entry.last_execution_id === executionId) {
-        return { did, ...entry };
-      }
-    }
-  }
-  return null;
+export async function findCachedExecution(executionId) {
+  const row = await getOne(`SELECT * FROM repeat_cache WHERE last_execution_id = $1`, [executionId]);
+  if (!row) return null;
+  let routing = null;
+  try { routing = JSON.parse(row.routing); } catch { routing = null; }
+  return {
+    did: row.agent_did,
+    intent_hash: row.intent_hash,
+    intent_type: row.intent_type,
+    provider_did: row.provider_did,
+    cost: row.cost,
+    routing,
+    timestamp: parseInt(row.updated_at, 10),
+    execution_count: row.execution_count,
+    last_execution_id: row.last_execution_id,
+  };
 }
 
-// Export for testing
-export { agentCache, CACHE_TTL_MS, MAX_ENTRIES_PER_AGENT, MAX_TOTAL_ENTRIES, REPEAT_THRESHOLD };
+export { CACHE_TTL_MS, MAX_ENTRIES_PER_AGENT, MAX_TOTAL_ENTRIES, REPEAT_THRESHOLD };

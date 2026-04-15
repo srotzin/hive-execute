@@ -8,7 +8,7 @@ import providersRouter from './routes/providers.js';
 import fastLanesRouter from './routes/fast-lanes.js';
 import performanceRouter from './routes/performance.js';
 import patternsRouter from './routes/patterns.js';
-import db from './services/db.js';
+import { initDb, getOne } from './services/db.js';
 
 const app = express();
 app.use(cors());
@@ -239,13 +239,13 @@ app.use(patternsRouter);
 
 // --- Velocity Doctrine endpoints ---
 
-app.get('/.well-known/hive-pulse.json', (_req, res) => {
+app.get('/.well-known/hive-pulse.json', async (_req, res) => {
   let totalExec = 0, successRate = 0, totalVolume = 0;
   try {
-    const stats = db.prepare('SELECT COUNT(*) as total, AVG(CASE WHEN status="completed" THEN 1.0 ELSE 0.0 END) as rate, COALESCE(SUM(cost_usdc),0) as vol FROM execution_logs').get();
-    totalExec = stats?.total || 0;
-    successRate = +(stats?.rate || 0).toFixed(3);
-    totalVolume = stats?.vol || 0;
+    const stats = await getOne('SELECT COUNT(*) as total, AVG(CASE WHEN status=\'completed\' THEN 1.0 ELSE 0.0 END) as rate, COALESCE(SUM(cost_usdc),0) as vol FROM execution_logs');
+    totalExec = parseInt(stats?.total || 0, 10);
+    successRate = +(parseFloat(stats?.rate || 0)).toFixed(3);
+    totalVolume = parseFloat(stats?.vol || 0);
   } catch (e) { /* db may not be available */ }
   res.json({
     timestamp: new Date().toISOString(),
@@ -333,9 +333,15 @@ app.get('/.well-known/ai.json', (_req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`HiveExecute — Execute Intent Engine running on port ${PORT}`);
-  console.log(`Platform #12 | Pre-transaction brain of the Hive Civilization`);
+// Initialize database and start server
+initDb().then(() => {
+  app.listen(PORT, () => {
+    console.log(`HiveExecute — Execute Intent Engine running on port ${PORT}`);
+    console.log(`Platform #12 | Pre-transaction brain of the Hive Civilization`);
+  });
+}).catch(err => {
+  console.error('Failed to initialize database:', err);
+  process.exit(1);
 });
 
 export default app;

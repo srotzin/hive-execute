@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import db from './services/db.js';
+import { run, getOne } from './services/db.js';
 import { interpretIntent } from './services/intent-interpreter.js';
 import { validateIdentity } from './services/identity-validator.js';
 import { checkBudget, reserveFunds, releaseFunds } from './services/budget-checker.js';
@@ -92,38 +92,38 @@ async function callSubmitIntent(params) {
   const now = new Date().toISOString();
   let fundsReserved = false;
 
-  db.prepare(`
+  await run(`
     INSERT INTO execution_logs (execution_id, did, intent, intent_type, constraints, budget_usdc, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
-  `).run(executionId, from_did, intent_type, mappedType, JSON.stringify({ to_did, memo }), amount_usdc, now);
+    VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)
+  `, [executionId, from_did, intent_type, mappedType, JSON.stringify({ to_did, memo }), amount_usdc, now]);
 
   try {
-    db.prepare('UPDATE execution_logs SET status = ? WHERE execution_id = ?').run('executing', executionId);
+    await run('UPDATE execution_logs SET status = $1 WHERE execution_id = $2', ['executing', executionId]);
 
     const identity = await validateIdentity(from_did);
     if (!identity.valid) {
-      return failIntent(executionId, startTime, identity.reason || 'invalid_did', 1);
+      return await failIntent(executionId, startTime, identity.reason || 'invalid_did', 1);
     }
 
     const budgetCheck = await checkBudget(from_did, amount_usdc);
     if (!budgetCheck.sufficient) {
-      return failIntent(executionId, startTime, budgetCheck.reason || 'insufficient_funds', 3);
+      return await failIntent(executionId, startTime, budgetCheck.reason || 'insufficient_funds', 3);
     }
 
     const compliance = await checkCompliance(from_did, mappedType, { to_did });
     if (!compliance.compliant) {
-      return failIntent(executionId, startTime, compliance.reason || 'compliance_violation', 4);
+      return await failIntent(executionId, startTime, compliance.reason || 'compliance_violation', 4);
     }
 
     const providerResult = await selectProvider(mappedType, {});
     if (!providerResult.selected) {
-      return failIntent(executionId, startTime, 'no_providers_available', 5);
+      return await failIntent(executionId, startTime, 'no_providers_available', 5);
     }
     const provider = providerResult.selected;
 
     const reservation = await reserveFunds(from_did, amount_usdc, executionId);
     if (!reservation.reserved) {
-      return failIntent(executionId, startTime, 'fund_reservation_failed', 6);
+      return await failIntent(executionId, startTime, 'fund_reservation_failed', 6);
     }
     fundsReserved = true;
 
@@ -131,7 +131,7 @@ async function callSubmitIntent(params) {
     if (!execution.success) {
       await releaseFunds(from_did, amount_usdc, executionId);
       fundsReserved = false;
-      return failIntent(executionId, startTime, execution.error || 'execution_failed', 7);
+      return await failIntent(executionId, startTime, execution.error || 'execution_failed', 7);
     }
 
     const cost = execution.cost || amount_usdc;
@@ -142,27 +142,27 @@ async function callSubmitIntent(params) {
     const latencyMs = Date.now() - startTime;
     const timestamp = new Date().toISOString();
 
-    const proof = generateProof(executionId, from_did, intent_type, execution, totalCost, timestamp);
+    const proof = await generateProof(executionId, from_did, intent_type, execution, totalCost, timestamp);
     const memory = await storeExecution(executionId, from_did, mappedType, {}, execution, totalCost);
-    updateProviderScore(provider.did, mappedType, true, latencyMs, cost);
+    await updateProviderScore(provider.did, mappedType, true, latencyMs, cost);
 
-    db.prepare(`
+    await run(`
       UPDATE execution_stats SET
         total_executions = total_executions + 1,
-        total_volume_usdc = total_volume_usdc + ?,
-        total_savings_usdc = total_savings_usdc + ?,
+        total_volume_usdc = total_volume_usdc + $1,
+        total_savings_usdc = total_savings_usdc + $2,
         executions_today = executions_today + 1,
-        last_updated = ?
+        last_updated = $3
       WHERE id = 1
-    `).run(totalCost, savings, timestamp);
+    `, [totalCost, savings, timestamp]);
 
-    db.prepare(`
+    await run(`
       UPDATE execution_logs SET
-        status = 'success', cost_usdc = ?, savings_usdc = ?, latency_ms = ?,
-        execution_hash = ?, memory_id = ?, provider_did = ?, settlement_id = ?,
-        platform_fee_usdc = ?, completed_at = ?
-      WHERE execution_id = ?
-    `).run(totalCost, savings, latencyMs, proof.hash, memory.memory_id, provider.did, execution.settlement_id || null, platformFee, timestamp, executionId);
+        status = 'success', cost_usdc = $1, savings_usdc = $2, latency_ms = $3,
+        execution_hash = $4, memory_id = $5, provider_did = $6, settlement_id = $7,
+        platform_fee_usdc = $8, completed_at = $9
+      WHERE execution_id = $10
+    `, [totalCost, savings, latencyMs, proof.hash, memory.memory_id, provider.did, execution.settlement_id || null, platformFee, timestamp, executionId]);
 
     return {
       content: [{
@@ -186,16 +186,16 @@ async function callSubmitIntent(params) {
     if (fundsReserved) {
       await releaseFunds(from_did, amount_usdc, executionId).catch(() => {});
     }
-    return failIntent(executionId, startTime, err.message, 0);
+    return await failIntent(executionId, startTime, err.message, 0);
   }
 }
 
-function failIntent(executionId, startTime, reason, step) {
+async function failIntent(executionId, startTime, reason, step) {
   const latency = Date.now() - startTime;
-  db.prepare(`
-    UPDATE execution_logs SET status = 'fail', error_reason = ?, step_failed = ?,
-      latency_ms = ?, completed_at = ? WHERE execution_id = ?
-  `).run(reason, step, latency, new Date().toISOString(), executionId);
+  await run(`
+    UPDATE execution_logs SET status = 'fail', error_reason = $1, step_failed = $2,
+      latency_ms = $3, completed_at = $4 WHERE execution_id = $5
+  `, [reason, step, latency, new Date().toISOString(), executionId]);
 
   return {
     isError: true,
@@ -206,13 +206,13 @@ function failIntent(executionId, startTime, reason, step) {
   };
 }
 
-function callGetStatus(params) {
+async function callGetStatus(params) {
   const { intent_id } = params;
   if (!intent_id) {
     return { isError: true, content: [{ type: 'text', text: 'Missing required parameter: intent_id' }] };
   }
 
-  const row = db.prepare('SELECT * FROM execution_logs WHERE execution_id = ?').get(intent_id);
+  const row = await getOne('SELECT * FROM execution_logs WHERE execution_id = $1', [intent_id]);
   if (!row) {
     return { isError: true, content: [{ type: 'text', text: `No execution found with id: ${intent_id}` }] };
   }
@@ -237,11 +237,13 @@ function callGetStatus(params) {
   };
 }
 
-function callGetStats() {
-  const global = db.prepare('SELECT * FROM execution_stats WHERE id = 1').get();
+async function callGetStats() {
+  const global = await getOne('SELECT * FROM execution_stats WHERE id = 1');
 
-  const successCount = db.prepare("SELECT COUNT(*) as c FROM execution_logs WHERE status = 'success'").get().c;
-  const totalCount = db.prepare('SELECT COUNT(*) as c FROM execution_logs').get().c;
+  const successCountRow = await getOne("SELECT COUNT(*) as c FROM execution_logs WHERE status = 'success'");
+  const totalCountRow = await getOne('SELECT COUNT(*) as c FROM execution_logs');
+  const successCount = parseInt(successCountRow?.c || 0, 10);
+  const totalCount = parseInt(totalCountRow?.c || 0, 10);
   const successRate = totalCount > 0 ? successCount / totalCount : 0;
 
   return {
@@ -258,8 +260,8 @@ function callGetStats() {
   };
 }
 
-function callListProviders() {
-  const providers = getProviders();
+async function callListProviders() {
+  const providers = await getProviders();
   return {
     content: [{
       type: 'text',

@@ -1,15 +1,15 @@
 import { Router } from 'express';
-import db from '../services/db.js';
+import { getOne, getAll } from '../services/db.js';
 import { requirePayment } from '../middleware/auth.js';
 import { getFastLaneStats } from '../services/fast-lanes.js';
 import { getRepeatStats } from '../services/repeat-detector.js';
 
 const router = Router();
 
-router.get('/v1/execute_intent/stats', requirePayment('stats'), (_req, res) => {
-  const global = db.prepare('SELECT * FROM execution_stats WHERE id = 1').get();
+router.get('/v1/execute_intent/stats', requirePayment('stats'), async (_req, res) => {
+  const global = await getOne('SELECT * FROM execution_stats WHERE id = 1');
 
-  const topIntents = db.prepare(`
+  const topIntents = await getAll(`
     SELECT intent_type, COUNT(*) as count, SUM(cost_usdc) as volume_usdc,
            AVG(latency_ms) as avg_latency_ms
     FROM execution_logs
@@ -17,24 +17,28 @@ router.get('/v1/execute_intent/stats', requirePayment('stats'), (_req, res) => {
     GROUP BY intent_type
     ORDER BY count DESC
     LIMIT 10
-  `).all();
+  `);
 
-  const successCount = db.prepare(
+  const successCountRow = await getOne(
     "SELECT COUNT(*) as c FROM execution_logs WHERE status = 'success'"
-  ).get().c;
-  const totalCount = db.prepare('SELECT COUNT(*) as c FROM execution_logs').get().c;
+  );
+  const totalCountRow = await getOne('SELECT COUNT(*) as c FROM execution_logs');
+  const successCount = parseInt(successCountRow?.c || 0, 10);
+  const totalCount = parseInt(totalCountRow?.c || 0, 10);
   const successRate = totalCount > 0 ? successCount / totalCount : 0;
 
-  const avgCost = db.prepare(
+  const avgCostRow = await getOne(
     "SELECT COALESCE(AVG(cost_usdc), 0) as avg FROM execution_logs WHERE status = 'success'"
-  ).get().avg;
+  );
+  const avgCost = parseFloat(avgCostRow?.avg || 0);
 
-  const avgLatency = db.prepare(
+  const avgLatencyRow = await getOne(
     "SELECT COALESCE(AVG(latency_ms), 0) as avg FROM execution_logs WHERE status = 'success'"
-  ).get().avg;
+  );
+  const avgLatency = parseFloat(avgLatencyRow?.avg || 0);
 
-  const fastLaneStats = getFastLaneStats();
-  const repeatStats = getRepeatStats();
+  const fastLaneStatsData = await getFastLaneStats();
+  const repeatStats = await getRepeatStats();
 
   res.json({
     total_executions: global?.total_executions || 0,
@@ -46,11 +50,11 @@ router.get('/v1/execute_intent/stats', requirePayment('stats'), (_req, res) => {
     success_rate: Math.round(successRate * 1000) / 1000,
     top_intents: topIntents,
     savings_generated_usdc: global?.total_savings_usdc || 0,
-    fast_lane_executions: fastLaneStats.fast_lane_executions,
-    fast_lane_savings_usdc: fastLaneStats.fast_lane_savings_usdc,
-    active_fast_lanes: fastLaneStats.active_fast_lanes,
-    auto_created_lanes: fastLaneStats.auto_created_lanes,
-    manually_created_lanes: fastLaneStats.manually_created_lanes,
+    fast_lane_executions: fastLaneStatsData.fast_lane_executions,
+    fast_lane_savings_usdc: fastLaneStatsData.fast_lane_savings_usdc,
+    active_fast_lanes: fastLaneStatsData.active_fast_lanes,
+    auto_created_lanes: fastLaneStatsData.auto_created_lanes,
+    manually_created_lanes: fastLaneStatsData.manually_created_lanes,
     repeat_executions: repeatStats.repeat_executions,
     repeat_savings_usdc: repeatStats.repeat_savings_usdc,
     top_patterns: repeatStats.top_patterns,
