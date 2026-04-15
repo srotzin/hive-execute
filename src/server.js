@@ -5,6 +5,7 @@ import executeRouter from './routes/execute.js';
 import historyRouter from './routes/history.js';
 import statsRouter from './routes/stats.js';
 import providersRouter from './routes/providers.js';
+import performanceRouter from './routes/performance.js';
 import db from './services/db.js';
 
 const app = express();
@@ -67,6 +68,12 @@ app.get('/', (_req, res) => {
         method: 'GET',
         path: '/v1/execute_intent/providers',
         description: 'Available providers by intent type',
+        auth: 'x402 payment or x-hive-internal-key',
+      },
+      performance: {
+        method: 'GET',
+        path: '/v1/execute_intent/performance/{did}',
+        description: 'Agent performance profile — tier, preferred providers, cost stats',
         auth: 'x402 payment or x-hive-internal-key',
       },
       health: {
@@ -195,6 +202,7 @@ app.use(executeRouter);
 app.use(historyRouter);
 app.use(statsRouter);
 app.use(providersRouter);
+app.use(performanceRouter);
 
 // --- Velocity Doctrine endpoints ---
 
@@ -267,6 +275,7 @@ app.get('/.well-known/ai.json', (_req, res) => {
       stats: 'GET /v1/execute_intent/stats',
       history: 'GET /v1/execute_intent/history/{did}',
       providers: 'GET /v1/execute_intent/providers',
+      performance: 'GET /v1/execute_intent/performance/{did}',
       pulse: 'GET /.well-known/hive-pulse.json',
     },
     economy: {

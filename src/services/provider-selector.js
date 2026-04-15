@@ -51,7 +51,17 @@ function scoreProvider(provider, constraints, scores) {
   return { total, breakdown: { priceScore, repScore, latencyScore, jurisScore } };
 }
 
-export async function selectProvider(intentType, constraints) {
+// Premium provider pool unlocked for gold/platinum tier agents
+const PREMIUM_PROVIDERS = {
+  compute_job: [
+    { did: 'did:hive:compute-premium-001', service: 'gpu_inference_premium', base_price: 0.04, latency_ms: 100, jurisdiction: 'US-CA' },
+  ],
+  payment_transfer: [
+    { did: 'did:hive:pay-premium-001', service: 'vault_transfer_priority', base_price: 0.002, latency_ms: 30, jurisdiction: 'US-CA' },
+  ],
+};
+
+export async function selectProvider(intentType, constraints, performanceProfile) {
   // Try fetching live providers from HiveForge for compute jobs
   let providers = DEFAULT_PROVIDERS[intentType] || [];
 
@@ -70,10 +80,26 @@ export async function selectProvider(intentType, constraints) {
     }
   }
 
+  // Unlock premium providers for gold/platinum tier agents
+  const tier = performanceProfile?.performance_tier;
+  if ((tier === 'gold' || tier === 'platinum') && PREMIUM_PROVIDERS[intentType]) {
+    providers = [...providers, ...PREMIUM_PROVIDERS[intentType]];
+  }
+
   // Filter by constraints
   const maxCost = constraints?.max_cost ?? Infinity;
   const maxLatency = constraints?.max_latency_ms ?? Infinity;
-  const eligible = providers.filter(p => p.base_price <= maxCost && p.latency_ms <= maxLatency);
+  let eligible = providers.filter(p => p.base_price <= maxCost && p.latency_ms <= maxLatency);
+
+  // If agent has a known avg cost for this intent type, filter out providers that are
+  // significantly more expensive (>50% above avg) — only when agent has history
+  if (performanceProfile?.has_history && performanceProfile.avg_cost_by_intent?.[intentType]) {
+    const avgCost = performanceProfile.avg_cost_by_intent[intentType];
+    const costCeiling = avgCost * 1.5;
+    const filtered = eligible.filter(p => p.base_price <= costCeiling);
+    // Only apply cost filter if it doesn't eliminate all providers
+    if (filtered.length > 0) eligible = filtered;
+  }
 
   if (eligible.length === 0) {
     return { selected: null, reason: 'no_eligible_providers', candidates: providers.length };
@@ -82,12 +108,27 @@ export async function selectProvider(intentType, constraints) {
   // Score and rank
   const scored = eligible.map(p => {
     const scores = getProviderScore(p.did);
-    const { total, breakdown } = scoreProvider(p, constraints, scores);
+    let { total, breakdown } = scoreProvider(p, constraints, scores);
+
+    // Memory-based boost: if agent has good history with this provider, boost score by 15%
+    if (performanceProfile?.success_rate_by_provider?.[p.did] !== undefined) {
+      const agentSuccessRate = performanceProfile.success_rate_by_provider[p.did];
+      if (agentSuccessRate >= 0.7) {
+        const boost = total * 0.15;
+        total += boost;
+        breakdown.memoryBoost = +boost.toFixed(2);
+      }
+    }
+
     return { ...p, score: total, breakdown, historicalScores: scores };
   });
 
   scored.sort((a, b) => b.score - a.score);
   const winner = scored[0];
+
+  const reason = performanceProfile?.has_history
+    ? `Memory-optimized provider (${winner.score.toFixed(1)}/100, tier=${tier}): price=${winner.base_price}, service=${winner.service}`
+    : `Best scored provider (${winner.score.toFixed(1)}/100): price=${winner.base_price}, service=${winner.service}`;
 
   return {
     selected: {
@@ -97,8 +138,9 @@ export async function selectProvider(intentType, constraints) {
       score: winner.score,
       breakdown: winner.breakdown,
     },
-    reason: `Best scored provider (${winner.score.toFixed(1)}/100): price=${winner.base_price}, service=${winner.service}`,
+    reason,
     alternatives: scored.slice(1, 3).map(s => ({ did: s.did, score: s.score.toFixed(1) })),
+    memory_enhanced: performanceProfile?.has_history || false,
   };
 }
 
