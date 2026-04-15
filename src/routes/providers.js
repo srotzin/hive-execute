@@ -4,8 +4,8 @@ import { requirePayment } from '../middleware/auth.js';
 
 const router = Router();
 
-router.get('/v1/execute_intent/providers', requirePayment('providers'), (_req, res) => {
-  const providers = getProviders();
+router.get('/v1/execute_intent/providers', requirePayment('providers'), async (_req, res) => {
+  const providers = await getProviders();
 
   res.json({
     by_intent: providers,

@@ -1,4 +1,4 @@
-import db from './db.js';
+import { getOne, getAll, run } from './db.js';
 import { hiveGet, getServiceUrl } from './cross-service.js';
 
 // Scoring weights
@@ -20,8 +20,8 @@ const DEFAULT_PROVIDERS = {
   ],
 };
 
-function getProviderScore(providerDid) {
-  const row = db.prepare('SELECT * FROM provider_scores WHERE did = ?').get(providerDid);
+async function getProviderScore(providerDid) {
+  const row = await getOne('SELECT * FROM provider_scores WHERE did = $1', [providerDid]);
   return row || { reliability_score: 500, avg_latency_ms: 300, avg_cost_usdc: 0.05 };
 }
 
@@ -106,8 +106,9 @@ export async function selectProvider(intentType, constraints, performanceProfile
   }
 
   // Score and rank
-  const scored = eligible.map(p => {
-    const scores = getProviderScore(p.did);
+  const scored = [];
+  for (const p of eligible) {
+    const scores = await getProviderScore(p.did);
     let { total, breakdown } = scoreProvider(p, constraints, scores);
 
     // Memory-based boost: if agent has good history with this provider, boost score by 15%
@@ -120,8 +121,8 @@ export async function selectProvider(intentType, constraints, performanceProfile
       }
     }
 
-    return { ...p, score: total, breakdown, historicalScores: scores };
-  });
+    scored.push({ ...p, score: total, breakdown, historicalScores: scores });
+  }
 
   scored.sort((a, b) => b.score - a.score);
   const winner = scored[0];
@@ -144,8 +145,8 @@ export async function selectProvider(intentType, constraints, performanceProfile
   };
 }
 
-export function updateProviderScore(providerDid, intentType, success, latencyMs, costUsdc) {
-  const existing = db.prepare('SELECT * FROM provider_scores WHERE did = ?').get(providerDid);
+export async function updateProviderScore(providerDid, intentType, success, latencyMs, costUsdc) {
+  const existing = await getOne('SELECT * FROM provider_scores WHERE did = $1', [providerDid]);
   const now = new Date().toISOString();
 
   if (existing) {
@@ -155,23 +156,23 @@ export function updateProviderScore(providerDid, intentType, success, latencyMs,
     const avgCost = ((existing.avg_cost_usdc * existing.executions_total) + costUsdc) / total;
     const reliability = (successes / total) * 1000;
 
-    db.prepare(`
+    await run(`
       UPDATE provider_scores
-      SET executions_total = ?, executions_success = ?, avg_latency_ms = ?,
-          avg_cost_usdc = ?, reliability_score = ?, last_updated = ?
-      WHERE did = ?
-    `).run(total, successes, avgLatency, avgCost, reliability, now, providerDid);
+      SET executions_total = $1, executions_success = $2, avg_latency_ms = $3,
+          avg_cost_usdc = $4, reliability_score = $5, last_updated = $6
+      WHERE did = $7
+    `, [total, successes, avgLatency, avgCost, reliability, now, providerDid]);
   } else {
-    db.prepare(`
+    await run(`
       INSERT INTO provider_scores (did, intent_type, executions_total, executions_success,
         avg_latency_ms, avg_cost_usdc, reliability_score, last_updated)
-      VALUES (?, ?, 1, ?, ?, ?, ?, ?)
-    `).run(providerDid, intentType, success ? 1 : 0, latencyMs, costUsdc, success ? 1000 : 0, now);
+      VALUES ($1, $2, 1, $3, $4, $5, $6, $7)
+    `, [providerDid, intentType, success ? 1 : 0, latencyMs, costUsdc, success ? 1000 : 0, now]);
   }
 }
 
-export function getProviders() {
-  const allScores = db.prepare('SELECT * FROM provider_scores').all();
+export async function getProviders() {
+  const allScores = await getAll('SELECT * FROM provider_scores');
   const scoreMap = {};
   for (const s of allScores) scoreMap[s.did] = s;
 

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import db from '../services/db.js';
+import { run, getOne } from '../services/db.js';
 import { interpretIntent } from '../services/intent-interpreter.js';
 import { validateIdentity } from '../services/identity-validator.js';
 import { checkBudget, reserveFunds, releaseFunds } from '../services/budget-checker.js';
@@ -50,17 +50,17 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
   let fundsReserved = false;
 
   // Create initial log entry
-  db.prepare(`
+  await run(`
     INSERT INTO execution_logs (execution_id, did, intent, constraints, budget_usdc, status, created_at)
-    VALUES (?, ?, ?, ?, ?, 'pending', ?)
-  `).run(executionId, did, intentString, JSON.stringify(constraints || {}), budget || 0, now);
+    VALUES ($1, $2, $3, $4, $5, 'pending', $6)
+  `, [executionId, did, intentString, JSON.stringify(constraints || {}), budget || 0, now]);
 
-  const fail = (reason, step) => {
+  const fail = async (reason, step) => {
     const latency = Date.now() - startTime;
-    db.prepare(`
-      UPDATE execution_logs SET status = 'fail', error_reason = ?, step_failed = ?,
-        latency_ms = ?, completed_at = ? WHERE execution_id = ?
-    `).run(reason, step, latency, new Date().toISOString(), executionId);
+    await run(`
+      UPDATE execution_logs SET status = 'fail', error_reason = $1, step_failed = $2,
+        latency_ms = $3, completed_at = $4 WHERE execution_id = $5
+    `, [reason, step, latency, new Date().toISOString(), executionId]);
 
     return res.status(200).json({
       execution_id: executionId,
@@ -76,11 +76,11 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
 
   try {
     // Step 1: Validate identity
-    db.prepare('UPDATE execution_logs SET status = ? WHERE execution_id = ?').run('executing', executionId);
+    await run('UPDATE execution_logs SET status = $1 WHERE execution_id = $2', ['executing', executionId]);
 
     const identity = await validateIdentity(did);
     if (!identity.valid) {
-      return fail(identity.reason || 'invalid_did', 1);
+      return await fail(identity.reason || 'invalid_did', 1);
     }
 
     // Step 2: Interpret intent
@@ -89,17 +89,17 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
       ? { type: resolveIntentType(intent.type), reason: `Object intent type: "${intent.type}"` }
       : interpretIntent(intentString);
     if (!interpreted.type) {
-      return fail('unrecognized_intent', 2);
+      return await fail('unrecognized_intent', 2);
     }
     const intentType = interpreted.type;
 
-    db.prepare('UPDATE execution_logs SET intent_type = ? WHERE execution_id = ?').run(intentType, executionId);
+    await run('UPDATE execution_logs SET intent_type = $1 WHERE execution_id = $2', [intentType, executionId]);
 
     // Fast lane check: see if this agent has a pre-approved path for this intent type
     let useFastLane = false;
     let matchedLane = null;
     try {
-      matchedLane = findMatchingFastLane(did, intentType, budget || 0);
+      matchedLane = await findMatchingFastLane(did, intentType, budget || 0);
       if (matchedLane) {
         useFastLane = true;
       }
@@ -108,7 +108,7 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
     }
 
     // Repeat detection: check if this intent has been executed before
-    const repeatResult = detectRepeat(did, intentType, intent);
+    const repeatResult = await detectRepeat(did, intentType, intent);
 
     // Step 2.5: Check promotions (before budget check)
     const promo = checkPromotion(did);
@@ -118,7 +118,7 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
     if (!isFreeExecution) {
       const budgetCheck = await checkBudget(did, budget || 0);
       if (!budgetCheck.sufficient) {
-        return fail(budgetCheck.reason || 'insufficient_funds', 3);
+        return await fail(budgetCheck.reason || 'insufficient_funds', 3);
       }
     }
 
@@ -127,7 +127,7 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
     if (!useFastLane) {
       compliance = await checkCompliance(did, intentType, constraints);
       if (!compliance.compliant) {
-        return fail(compliance.reason || 'compliance_violation', 4);
+        return await fail(compliance.reason || 'compliance_violation', 4);
       }
     }
 
@@ -152,7 +152,7 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
     } else {
       providerResult = await selectProvider(intentType, constraints, performanceProfile);
       if (!providerResult.selected) {
-        return fail(providerResult.reason || 'no_providers_available', 5);
+        return await fail(providerResult.reason || 'no_providers_available', 5);
       }
       provider = providerResult.selected;
     }
@@ -161,7 +161,7 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
     if (!isFreeExecution) {
       const reservation = await reserveFunds(did, budget || provider.price_usdc, executionId);
       if (!reservation.reserved) {
-        return fail('fund_reservation_failed', 6);
+        return await fail('fund_reservation_failed', 6);
       }
       fundsReserved = true;
     }
@@ -176,7 +176,7 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
       // Compensating transaction: release reserved funds
       await releaseFunds(did, budget || provider.price_usdc, executionId);
       fundsReserved = false;
-      return fail(execution.error || 'execution_failed', 7);
+      return await fail(execution.error || 'execution_failed', 7);
     }
 
     // Step 8: Settlement (already handled in executor for most types)
@@ -211,25 +211,25 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
 
     // Step 9: Generate proof
     const timestamp = new Date().toISOString();
-    const proof = generateProof(executionId, did, intentString, result, totalCost, timestamp);
+    const proof = await generateProof(executionId, did, intentString, result, totalCost, timestamp);
 
     // Step 10: Store memory
     const memory = await storeExecution(executionId, did, intentType, executionPlan, result, totalCost);
 
     // Step 11: Update stats
     const latencyMs = Date.now() - startTime;
-    updateProviderScore(provider.did, intentType, true, latencyMs, cost);
+    await updateProviderScore(provider.did, intentType, true, latencyMs, cost);
 
     // Update global stats
-    db.prepare(`
+    await run(`
       UPDATE execution_stats SET
         total_executions = total_executions + 1,
-        total_volume_usdc = total_volume_usdc + ?,
-        total_savings_usdc = total_savings_usdc + ?,
+        total_volume_usdc = total_volume_usdc + $1,
+        total_savings_usdc = total_savings_usdc + $2,
         executions_today = executions_today + 1,
-        last_updated = ?
+        last_updated = $3
       WHERE id = 1
-    `).run(totalCost, savings, timestamp);
+    `, [totalCost, savings, timestamp]);
 
     // Step 11.5: Store execution result back to HiveMind for performance learning
     storeExecutionToMemory(did, {
@@ -243,36 +243,36 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
     }).catch(() => {}); // fire-and-forget, never block
 
     // Update execution log
-    db.prepare(`
+    await run(`
       UPDATE execution_logs SET
-        status = 'success', intent_type = ?, execution_plan = ?, result = ?,
-        cost_usdc = ?, savings_usdc = ?, latency_ms = ?, execution_hash = ?,
-        memory_id = ?, provider_did = ?, settlement_id = ?, platform_fee_usdc = ?,
-        completed_at = ?
-      WHERE execution_id = ?
-    `).run(
+        status = 'success', intent_type = $1, execution_plan = $2, result = $3,
+        cost_usdc = $4, savings_usdc = $5, latency_ms = $6, execution_hash = $7,
+        memory_id = $8, provider_did = $9, settlement_id = $10, platform_fee_usdc = $11,
+        completed_at = $12
+      WHERE execution_id = $13
+    `, [
       intentType, JSON.stringify(executionPlan), JSON.stringify(result),
       totalCost, savings, latencyMs, proof.hash,
       memory.memory_id, provider.did, execution.settlement_id || null, platformFee,
       timestamp, executionId
-    );
+    ]);
 
     // Track execution for fast lane auto-creation
     if (useFastLane) {
-      recordFastLaneExecution(matchedLane.lane_id, savings);
+      await recordFastLaneExecution(matchedLane.lane_id, savings);
     }
     let autoCreatedLane = null;
     try {
-      autoCreatedLane = trackExecution(did, intentType, totalCost);
+      autoCreatedLane = await trackExecution(did, intentType, totalCost);
     } catch (_) {
       // Never fail because tracking fails
     }
 
     // Record in repeat cache for future optimization
     try {
-      recordExecution(did, intentType, intent, provider.did, totalCost, provider, executionId);
+      await recordExecution(did, intentType, intent, provider.did, totalCost, provider, executionId);
       if (repeatOptimized) {
-        trackRepeatSavings(savingsFromCache);
+        await trackRepeatSavings(savingsFromCache);
       }
     } catch {
       // Never fail execution because of cache recording
@@ -299,7 +299,9 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
       response.fast_lane = true;
       response.lane_id = matchedLane.lane_id;
     } else {
-      response.fast_lane_eligible = isFastLaneEligible ? isFastLaneEligible(did, intentType) : false;
+      let eligible = false;
+      try { eligible = await isFastLaneEligible(did, intentType); } catch { eligible = false; }
+      response.fast_lane_eligible = eligible;
     }
 
     if (autoCreatedLane) {
@@ -329,10 +331,10 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
     }
     const latency = Date.now() - startTime;
     const failTs = new Date().toISOString();
-    db.prepare(`
-      UPDATE execution_logs SET status = 'fail', error_reason = ?, latency_ms = ?, completed_at = ?
-      WHERE execution_id = ?
-    `).run(err.message, latency, failTs, executionId);
+    await run(`
+      UPDATE execution_logs SET status = 'fail', error_reason = $1, latency_ms = $2, completed_at = $3
+      WHERE execution_id = $4
+    `, [err.message, latency, failTs, executionId]);
 
     // Store failed execution to HiveMind for performance learning
     if (did) {

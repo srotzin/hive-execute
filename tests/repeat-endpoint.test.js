@@ -1,13 +1,10 @@
-import { describe, it, before } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { initDb } from '../src/services/db.js';
 
 /**
  * Integration-style tests for the repeat and patterns endpoints.
  * These test the HTTP layer using the Express app directly.
- *
- * NOTE: These tests import the app and make requests using Node's built-in
- * fetch or a simple HTTP request helper. Since the app uses SQLite (better-sqlite3),
- * the DB is created fresh each time the test process starts.
  */
 
 // Simple helper to make requests to the Express app
@@ -15,6 +12,9 @@ let server;
 let baseUrl;
 
 before(async () => {
+  // Initialize DB before importing app
+  await initDb();
+
   // Import the app and start on a random port
   const { default: app } = await import('../src/server.js');
   await new Promise((resolve) => {
@@ -99,7 +99,6 @@ describe('stats endpoint with repeat metrics', () => {
 });
 
 // Cleanup
-import { after } from 'node:test';
 after(() => {
   if (server) server.close();
 });

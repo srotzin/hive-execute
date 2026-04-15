@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import db from '../services/db.js';
+import { run } from '../services/db.js';
 import { requirePayment } from '../middleware/auth.js';
 import {
   createFastLane,
@@ -31,7 +31,7 @@ function resolveIntentType(type) {
 const router = Router();
 
 // POST /v1/execute_intent/fast-lane/register — Create a pre-approved fast lane
-router.post('/v1/execute_intent/fast-lane/register', requirePayment('execute_intent'), (req, res) => {
+router.post('/v1/execute_intent/fast-lane/register', requirePayment('execute_intent'), async (req, res) => {
   const { did, intent_type, parameters_template, max_amount_usdc, valid_hours } = req.body;
 
   if (!did || !intent_type) {
@@ -47,7 +47,7 @@ router.post('/v1/execute_intent/fast-lane/register', requirePayment('execute_int
     return res.status(400).json({ error: 'invalid_max_amount', details: 'max_amount_usdc must be a positive number' });
   }
 
-  const lane = createFastLane(
+  const lane = await createFastLane(
     did,
     canonicalType,
     parameters_template || {},
@@ -64,10 +64,10 @@ router.post('/v1/execute_intent/fast-lane/register', requirePayment('execute_int
 });
 
 // GET /v1/execute_intent/fast-lane/:did — List all active fast lanes for an agent
-router.get('/v1/execute_intent/fast-lane/:did', requirePayment('stats'), (req, res) => {
+router.get('/v1/execute_intent/fast-lane/:did', requirePayment('stats'), async (req, res) => {
   const { did } = req.params;
-  const lanes = getFastLanesForAgent(did);
-  const agentStats = getTotalFastLaneExecutions(did);
+  const lanes = await getFastLanesForAgent(did);
+  const agentStats = await getTotalFastLaneExecutions(did);
 
   return res.json({
     lanes,
@@ -77,9 +77,9 @@ router.get('/v1/execute_intent/fast-lane/:did', requirePayment('stats'), (req, r
 });
 
 // DELETE /v1/execute_intent/fast-lane/:lane_id — Deactivate a fast lane
-router.delete('/v1/execute_intent/fast-lane/:lane_id', requirePayment('stats'), (req, res) => {
+router.delete('/v1/execute_intent/fast-lane/:lane_id', requirePayment('stats'), async (req, res) => {
   const { lane_id } = req.params;
-  const lane = deactivateFastLane(lane_id);
+  const lane = await deactivateFastLane(lane_id);
 
   if (!lane) {
     return res.status(404).json({ error: 'lane_not_found', details: `Fast lane ${lane_id} not found or already deactivated` });
@@ -106,7 +106,7 @@ router.post('/v1/execute_intent/fast-lane/:lane_id/execute', requirePayment('exe
   }
 
   // Validate the fast lane exists and belongs to this agent
-  const lane = getFastLane(lane_id);
+  const lane = await getFastLane(lane_id);
   if (!lane) {
     return res.status(404).json({ error: 'lane_not_found', details: `Fast lane ${lane_id} not found` });
   }
@@ -134,20 +134,20 @@ router.post('/v1/execute_intent/fast-lane/:lane_id/execute', requirePayment('exe
   const now = new Date().toISOString();
 
   // Create log entry
-  db.prepare(`
+  await run(`
     INSERT INTO execution_logs (execution_id, did, intent, intent_type, constraints, budget_usdc, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
-  `).run(executionId, did, intentString, intentType, JSON.stringify(constraints || {}), budget || 0, now);
+    VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)
+  `, [executionId, did, intentString, intentType, JSON.stringify(constraints || {}), budget || 0, now]);
 
   try {
     // Fast lane path: skip compliance, skip negotiation — only check budget
     const budgetCheck = await checkBudget(did, budget || 0);
     if (!budgetCheck.sufficient) {
       const latency = Date.now() - startTime;
-      db.prepare(`
-        UPDATE execution_logs SET status = 'fail', error_reason = ?, step_failed = 3,
-          latency_ms = ?, completed_at = ? WHERE execution_id = ?
-      `).run(budgetCheck.reason || 'insufficient_funds', latency, new Date().toISOString(), executionId);
+      await run(`
+        UPDATE execution_logs SET status = 'fail', error_reason = $1, step_failed = 3,
+          latency_ms = $2, completed_at = $3 WHERE execution_id = $4
+      `, [budgetCheck.reason || 'insufficient_funds', latency, new Date().toISOString(), executionId]);
 
       return res.status(200).json({
         execution_id: executionId,
@@ -164,10 +164,10 @@ router.post('/v1/execute_intent/fast-lane/:lane_id/execute', requirePayment('exe
     const providerResult = await selectProvider(intentType, constraints);
     if (!providerResult.selected) {
       const latency = Date.now() - startTime;
-      db.prepare(`
+      await run(`
         UPDATE execution_logs SET status = 'fail', error_reason = 'no_providers_available', step_failed = 5,
-          latency_ms = ?, completed_at = ? WHERE execution_id = ?
-      `).run(latency, new Date().toISOString(), executionId);
+          latency_ms = $1, completed_at = $2 WHERE execution_id = $3
+      `, [latency, new Date().toISOString(), executionId]);
 
       return res.status(200).json({
         execution_id: executionId,
@@ -182,7 +182,7 @@ router.post('/v1/execute_intent/fast-lane/:lane_id/execute', requirePayment('exe
     const provider = providerResult.selected;
 
     // Execute
-    db.prepare('UPDATE execution_logs SET status = ? WHERE execution_id = ?').run('executing', executionId);
+    await run('UPDATE execution_logs SET status = $1 WHERE execution_id = $2', ['executing', executionId]);
 
     const execMetadata = typeof intent === 'object'
       ? { ...metadata, recipient_did: intent.to, amount_usdc: intent.amount_usdc, ...intent }
@@ -191,10 +191,10 @@ router.post('/v1/execute_intent/fast-lane/:lane_id/execute', requirePayment('exe
 
     if (!execution.success) {
       const latency = Date.now() - startTime;
-      db.prepare(`
-        UPDATE execution_logs SET status = 'fail', error_reason = ?, step_failed = 7,
-          latency_ms = ?, completed_at = ? WHERE execution_id = ?
-      `).run(execution.error || 'execution_failed', latency, new Date().toISOString(), executionId);
+      await run(`
+        UPDATE execution_logs SET status = 'fail', error_reason = $1, step_failed = 7,
+          latency_ms = $2, completed_at = $3 WHERE execution_id = $4
+      `, [execution.error || 'execution_failed', latency, new Date().toISOString(), executionId]);
 
       return res.status(200).json({
         execution_id: executionId,
@@ -232,42 +232,42 @@ router.post('/v1/execute_intent/fast-lane/:lane_id/execute', requirePayment('exe
 
     // Generate proof
     const timestamp = new Date().toISOString();
-    const proof = generateProof(executionId, did, intentString, result, totalCost, timestamp);
+    const proof = await generateProof(executionId, did, intentString, result, totalCost, timestamp);
 
     // Store memory
     const memory = await storeExecution(executionId, did, intentType, executionPlan, result, totalCost);
 
     // Update stats
     const latencyMs = Date.now() - startTime;
-    updateProviderScore(provider.did, intentType, true, latencyMs, cost);
+    await updateProviderScore(provider.did, intentType, true, latencyMs, cost);
 
-    db.prepare(`
+    await run(`
       UPDATE execution_stats SET
         total_executions = total_executions + 1,
-        total_volume_usdc = total_volume_usdc + ?,
-        total_savings_usdc = total_savings_usdc + ?,
+        total_volume_usdc = total_volume_usdc + $1,
+        total_savings_usdc = total_savings_usdc + $2,
         executions_today = executions_today + 1,
-        last_updated = ?
+        last_updated = $3
       WHERE id = 1
-    `).run(totalCost, savings, timestamp);
+    `, [totalCost, savings, timestamp]);
 
     // Update execution log
-    db.prepare(`
+    await run(`
       UPDATE execution_logs SET
-        status = 'success', intent_type = ?, execution_plan = ?, result = ?,
-        cost_usdc = ?, savings_usdc = ?, latency_ms = ?, execution_hash = ?,
-        memory_id = ?, provider_did = ?, settlement_id = ?, platform_fee_usdc = ?,
-        completed_at = ?
-      WHERE execution_id = ?
-    `).run(
+        status = 'success', intent_type = $1, execution_plan = $2, result = $3,
+        cost_usdc = $4, savings_usdc = $5, latency_ms = $6, execution_hash = $7,
+        memory_id = $8, provider_did = $9, settlement_id = $10, platform_fee_usdc = $11,
+        completed_at = $12
+      WHERE execution_id = $13
+    `, [
       intentType, JSON.stringify(executionPlan), JSON.stringify(result),
       totalCost, savings, latencyMs, proof.hash,
       memory.memory_id, provider.did, execution.settlement_id || null, platformFee,
       timestamp, executionId
-    );
+    ]);
 
     // Record fast lane execution
-    recordFastLaneExecution(lane_id, savings);
+    await recordFastLaneExecution(lane_id, savings);
 
     return res.json({
       execution_id: executionId,
@@ -285,10 +285,10 @@ router.post('/v1/execute_intent/fast-lane/:lane_id/execute', requirePayment('exe
     });
   } catch (err) {
     const latency = Date.now() - startTime;
-    db.prepare(`
-      UPDATE execution_logs SET status = 'fail', error_reason = ?, latency_ms = ?, completed_at = ?
-      WHERE execution_id = ?
-    `).run(err.message, latency, new Date().toISOString(), executionId);
+    await run(`
+      UPDATE execution_logs SET status = 'fail', error_reason = $1, latency_ms = $2, completed_at = $3
+      WHERE execution_id = $4
+    `, [err.message, latency, new Date().toISOString(), executionId]);
 
     return res.status(500).json({
       execution_id: executionId,

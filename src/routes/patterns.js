@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import db from '../services/db.js';
+import { getAll, getOne, run } from '../services/db.js';
 import { detectPatterns } from '../services/pattern-analyzer.js';
 import { getAgentRepeatStats, findCachedExecution, recordExecution, trackRepeatSavings } from '../services/repeat-detector.js';
 import { executeIntent, calculatePlatformFee } from '../services/executor.js';
@@ -12,24 +12,24 @@ import { requirePayment } from '../middleware/auth.js';
 const router = Router();
 
 // GET /v1/execute_intent/patterns/:did — detected patterns for an agent
-router.get('/v1/execute_intent/patterns/:did', requirePayment('stats'), (req, res) => {
+router.get('/v1/execute_intent/patterns/:did', requirePayment('stats'), async (req, res) => {
   const { did } = req.params;
 
   // Fetch execution history from DB
-  const history = db.prepare(`
+  const history = await getAll(`
     SELECT execution_id, did, intent, intent_type, status, cost_usdc, savings_usdc,
            latency_ms, execution_hash, provider_did, result, error_reason, created_at, completed_at
     FROM execution_logs
-    WHERE did = ?
+    WHERE did = $1
     ORDER BY created_at DESC
     LIMIT 500
-  `).all(did);
+  `, [did]);
 
   // Analyze patterns
   const patterns = detectPatterns(did, history);
 
   // Get repeat stats for this agent
-  const repeatStats = getAgentRepeatStats(did);
+  const repeatStats = await getAgentRepeatStats(did);
 
   // Calculate total savings from repeat executions for this agent
   const totalRepeatExecs = repeatStats.entries.reduce((sum, e) => sum + Math.max(0, e.execution_count - 1), 0);
@@ -55,9 +55,9 @@ router.post('/v1/execute_intent/repeat/:execution_id', requirePayment('execute_i
   const newExecutionId = 'exec_' + uuidv4().replace(/-/g, '').slice(0, 20);
 
   // Look up original execution in DB
-  const original = db.prepare(`
-    SELECT * FROM execution_logs WHERE execution_id = ? AND status = 'success'
-  `).get(originalExecutionId);
+  const original = await getOne(`
+    SELECT * FROM execution_logs WHERE execution_id = $1 AND status = 'success'
+  `, [originalExecutionId]);
 
   if (!original) {
     return res.status(404).json({
@@ -105,10 +105,10 @@ router.post('/v1/execute_intent/repeat/:execution_id', requirePayment('execute_i
   const now = new Date().toISOString();
 
   // Create log entry for the repeat execution
-  db.prepare(`
+  await run(`
     INSERT INTO execution_logs (execution_id, did, intent, intent_type, constraints, budget_usdc, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'executing', ?)
-  `).run(newExecutionId, did, intentString, intentType, JSON.stringify(constraints), original.budget_usdc || 0, now);
+    VALUES ($1, $2, $3, $4, $5, $6, 'executing', $7)
+  `, [newExecutionId, did, intentString, intentType, JSON.stringify(constraints), original.budget_usdc || 0, now]);
 
   try {
     // Parse original intent for metadata
@@ -123,10 +123,10 @@ router.post('/v1/execute_intent/repeat/:execution_id', requirePayment('execute_i
 
     if (!execution.success) {
       const latency = Date.now() - startTime;
-      db.prepare(`
-        UPDATE execution_logs SET status = 'fail', error_reason = ?, latency_ms = ?, completed_at = ?
-        WHERE execution_id = ?
-      `).run(execution.error || 'execution_failed', latency, new Date().toISOString(), newExecutionId);
+      await run(`
+        UPDATE execution_logs SET status = 'fail', error_reason = $1, latency_ms = $2, completed_at = $3
+        WHERE execution_id = $4
+      `, [execution.error || 'execution_failed', latency, new Date().toISOString(), newExecutionId]);
 
       return res.status(200).json({
         execution_id: newExecutionId,
@@ -162,44 +162,44 @@ router.post('/v1/execute_intent/repeat/:execution_id', requirePayment('execute_i
 
     // Generate proof
     const timestamp = new Date().toISOString();
-    const proof = generateProof(newExecutionId, did, intentString, result, totalCost, timestamp);
+    const proof = await generateProof(newExecutionId, did, intentString, result, totalCost, timestamp);
 
     // Store memory
     const memory = await storeExecution(newExecutionId, did, intentType, executionPlan, result, totalCost);
 
     // Update stats
     const latencyMs = Date.now() - startTime;
-    updateProviderScore(provider.did, intentType, true, latencyMs, cost);
+    await updateProviderScore(provider.did, intentType, true, latencyMs, cost);
 
-    db.prepare(`
+    await run(`
       UPDATE execution_stats SET
         total_executions = total_executions + 1,
-        total_volume_usdc = total_volume_usdc + ?,
-        total_savings_usdc = total_savings_usdc + ?,
+        total_volume_usdc = total_volume_usdc + $1,
+        total_savings_usdc = total_savings_usdc + $2,
         executions_today = executions_today + 1,
-        last_updated = ?
+        last_updated = $3
       WHERE id = 1
-    `).run(totalCost, savings, timestamp);
+    `, [totalCost, savings, timestamp]);
 
     // Update execution log
-    db.prepare(`
+    await run(`
       UPDATE execution_logs SET
-        status = 'success', intent_type = ?, execution_plan = ?, result = ?,
-        cost_usdc = ?, savings_usdc = ?, latency_ms = ?, execution_hash = ?,
-        memory_id = ?, provider_did = ?, settlement_id = ?, platform_fee_usdc = ?,
-        completed_at = ?
-      WHERE execution_id = ?
-    `).run(
+        status = 'success', intent_type = $1, execution_plan = $2, result = $3,
+        cost_usdc = $4, savings_usdc = $5, latency_ms = $6, execution_hash = $7,
+        memory_id = $8, provider_did = $9, settlement_id = $10, platform_fee_usdc = $11,
+        completed_at = $12
+      WHERE execution_id = $13
+    `, [
       intentType, JSON.stringify(executionPlan), JSON.stringify(result),
       totalCost, savings, latencyMs, proof.hash,
       memory.memory_id, provider.did, execution.settlement_id || null, platformFee,
       timestamp, newExecutionId
-    );
+    ]);
 
     // Record in repeat cache
     try {
-      recordExecution(did, intentType, intent, provider.did, totalCost, provider, newExecutionId);
-      trackRepeatSavings(repeatSavings);
+      await recordExecution(did, intentType, intent, provider.did, totalCost, provider, newExecutionId);
+      await trackRepeatSavings(repeatSavings);
     } catch {
       // Never fail execution because of cache recording
     }
@@ -221,10 +221,10 @@ router.post('/v1/execute_intent/repeat/:execution_id', requirePayment('execute_i
     });
   } catch (err) {
     const latency = Date.now() - startTime;
-    db.prepare(`
-      UPDATE execution_logs SET status = 'fail', error_reason = ?, latency_ms = ?, completed_at = ?
-      WHERE execution_id = ?
-    `).run(err.message, latency, new Date().toISOString(), newExecutionId);
+    await run(`
+      UPDATE execution_logs SET status = 'fail', error_reason = $1, latency_ms = $2, completed_at = $3
+      WHERE execution_id = $4
+    `, [err.message, latency, new Date().toISOString(), newExecutionId]);
 
     return res.status(500).json({
       execution_id: newExecutionId,
