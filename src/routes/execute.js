@@ -9,6 +9,7 @@ import { selectProvider, updateProviderScore } from '../services/provider-select
 import { executeIntent, calculatePlatformFee } from '../services/executor.js';
 import { generateProof } from '../services/proof-generator.js';
 import { storeExecution } from '../services/memory-store.js';
+import { fetchPerformanceProfile, storeExecutionToMemory } from '../services/memory-performance.js';
 import { requirePayment } from '../middleware/auth.js';
 import {
   findMatchingFastLane,
@@ -116,8 +117,11 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
       }
     }
 
-    // Step 5: Select provider
-    const providerResult = await selectProvider(intentType, constraints);
+    // Step 4.5: Fetch agent performance profile from HiveMind memory
+    const performanceProfile = await fetchPerformanceProfile(did);
+
+    // Step 5: Select provider (with memory-based optimization)
+    const providerResult = await selectProvider(intentType, constraints, performanceProfile);
     if (!providerResult.selected) {
       return fail(providerResult.reason || 'no_providers_available', 5);
     }
@@ -160,6 +164,8 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
       routing_reason: useFastLane ? 'fast_lane_pre_approved' : providerResult.reason,
       compliance_status: compliance.reason,
       identity_reputation: identity.reputation,
+      memory_enhanced: providerResult.memory_enhanced || false,
+      performance_tier: performanceProfile.performance_tier,
     };
 
     const result = {
@@ -189,6 +195,17 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
         last_updated = ?
       WHERE id = 1
     `).run(totalCost, savings, timestamp);
+
+    // Step 11.5: Store execution result back to HiveMind for performance learning
+    storeExecutionToMemory(did, {
+      execution_id: executionId,
+      intent_type: intentType,
+      provider: provider.did,
+      cost: totalCost,
+      success: true,
+      latency_ms: latencyMs,
+      timestamp,
+    }).catch(() => {}); // fire-and-forget, never block
 
     // Update execution log
     db.prepare(`
@@ -228,6 +245,8 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
       latency_ms: latencyMs,
       execution_hash: proof.hash,
       memory_id: memory.memory_id,
+      performance_tier: performanceProfile ? performanceProfile.performance_tier : 'bronze',
+      memory_enhanced: providerResult.memory_enhanced || false,
     };
 
     // Add fast lane info to response
@@ -235,7 +254,7 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
       response.fast_lane = true;
       response.lane_id = matchedLane.lane_id;
     } else {
-      response.fast_lane_eligible = isFastLaneEligible(did, intentType);
+      response.fast_lane_eligible = isFastLaneEligible ? isFastLaneEligible(did, intentType) : false;
     }
 
     if (autoCreatedLane) {
@@ -249,10 +268,24 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
       await releaseFunds(did, budget || 0, executionId).catch(() => {});
     }
     const latency = Date.now() - startTime;
+    const failTs = new Date().toISOString();
     db.prepare(`
       UPDATE execution_logs SET status = 'fail', error_reason = ?, latency_ms = ?, completed_at = ?
       WHERE execution_id = ?
-    `).run(err.message, latency, new Date().toISOString(), executionId);
+    `).run(err.message, latency, failTs, executionId);
+
+    // Store failed execution to HiveMind for performance learning
+    if (did) {
+      storeExecutionToMemory(did, {
+        execution_id: executionId,
+        intent_type: 'unknown',
+        provider: null,
+        cost: 0,
+        success: false,
+        latency_ms: latency,
+        timestamp: failTs,
+      }).catch(() => {});
+    }
 
     return res.status(500).json({
       execution_id: executionId,

@@ -6,8 +6,9 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test tests/fast-lanes.test.js",
-    "test:api": "node --test tests/fast-lanes-api.test.js"
+    "test": "node --test test/",
+    "test:fast-lanes": "node --test tests/fast-lanes.test.js",
+    "test:fast-lanes-api": "node --test tests/fast-lanes-api.test.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
