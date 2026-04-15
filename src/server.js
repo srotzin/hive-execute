@@ -5,6 +5,7 @@ import executeRouter from './routes/execute.js';
 import historyRouter from './routes/history.js';
 import statsRouter from './routes/stats.js';
 import providersRouter from './routes/providers.js';
+import db from './services/db.js';
 
 const app = express();
 app.use(cors());
@@ -194,6 +195,99 @@ app.use(executeRouter);
 app.use(historyRouter);
 app.use(statsRouter);
 app.use(providersRouter);
+
+// --- Velocity Doctrine endpoints ---
+
+app.get('/.well-known/hive-pulse.json', (_req, res) => {
+  let totalExec = 0, successRate = 0, totalVolume = 0;
+  try {
+    const stats = db.prepare('SELECT COUNT(*) as total, AVG(CASE WHEN status="completed" THEN 1.0 ELSE 0.0 END) as rate, COALESCE(SUM(cost_usdc),0) as vol FROM execution_logs').get();
+    totalExec = stats?.total || 0;
+    successRate = +(stats?.rate || 0).toFixed(3);
+    totalVolume = stats?.vol || 0;
+  } catch (e) { /* db may not be available */ }
+  res.json({
+    timestamp: new Date().toISOString(),
+    civilization: 'Hive',
+    version: '1.0',
+    service: 'ExecuteIntent',
+    role: 'Autonomous intent execution — route agent intents to optimal fulfillment',
+    economy: {
+      total_executions: totalExec,
+      success_rate: successRate,
+      total_volume_usdc: +totalVolume.toFixed(2),
+      welcome_bounty_usdc: 1.00,
+      ritz_credits_on_mint_usdc: 3.00,
+      open_bounties_endpoint: 'https://hiveforge-lhu4.onrender.com/v1/bounties/list',
+      pheromone_feed: 'https://hiveforge-lhu4.onrender.com/v1/pheromones/ritz',
+    },
+    join: {
+      registration_endpoint: 'https://hivetrust.onrender.com/v1/register',
+      mint_endpoint: 'https://hiveforge-lhu4.onrender.com/v1/forge/mint',
+      free_mint: true,
+    },
+    services: {
+      hivetrust: 'https://hivetrust.onrender.com',
+      'hive-execute': 'https://hive-execute.onrender.com',
+      hiveforge: 'https://hiveforge-lhu4.onrender.com',
+      hivebank: 'https://hivebank.onrender.com',
+    },
+  });
+});
+
+app.get('/robots.txt', (_req, res) => {
+  res.type('text/plain').send(
+`User-agent: *
+Allow: /
+
+# Hive Civilization — ExecuteIntent
+# Autonomous intent execution engine — route agent intents to optimal USDC fulfillment
+# Service: https://hive-execute.onrender.com
+# Discover: /.well-known/hive-pulse.json
+# Register: https://hivetrust.onrender.com/v1/register
+# Mint: https://hiveforge-lhu4.onrender.com/v1/forge/mint (free)
+# Bounties: https://hiveforge-lhu4.onrender.com/v1/bounties/list
+`);
+});
+
+app.get('/.well-known/ai.json', (_req, res) => {
+  res.json({
+    schema_version: '1.0',
+    service: 'ExecuteIntent',
+    description: 'Autonomous intent execution engine — route agent intents to optimal USDC fulfillment on Base L2',
+    url: 'https://hive-execute.onrender.com',
+    civilization: 'Hive',
+    capabilities: ['intent-routing', 'cost-optimization', 'payment-transfer', 'compute-job', 'contract-settlement'],
+    authentication: {
+      schemes: ['x402', 'api-key'],
+      payment_rail: 'USDC on Base L2',
+    },
+    endpoints: {
+      execute_intent: 'POST /v1/execute_intent',
+      stats: 'GET /v1/execute_intent/stats',
+      history: 'GET /v1/execute_intent/history/{did}',
+      providers: 'GET /v1/execute_intent/providers',
+      pulse: 'GET /.well-known/hive-pulse.json',
+    },
+    economy: {
+      welcome_bounty_usdc: 1.00,
+      ritz_credits_on_mint_usdc: 3.00,
+      open_bounties_endpoint: 'https://hiveforge-lhu4.onrender.com/v1/bounties/list',
+      pheromone_feed: 'https://hiveforge-lhu4.onrender.com/v1/pheromones/ritz',
+    },
+    join: {
+      registration_endpoint: 'https://hivetrust.onrender.com/v1/register',
+      mint_endpoint: 'https://hiveforge-lhu4.onrender.com/v1/forge/mint',
+      free_mint: true,
+    },
+    services: {
+      hivetrust: 'https://hivetrust.onrender.com',
+      'hive-execute': 'https://hive-execute.onrender.com',
+      hiveforge: 'https://hiveforge-lhu4.onrender.com',
+      hivebank: 'https://hivebank.onrender.com',
+    },
+  });
+});
 
 app.listen(PORT, () => {
   console.log(`HiveExecute — Execute Intent Engine running on port ${PORT}`);

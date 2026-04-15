@@ -41,6 +41,15 @@ export function requirePayment(feeKey) {
           headers_required: ['X-Payment'],
           note: 'Include X-Payment header with payment proof to proceed',
         },
+        while_you_are_here: {
+          welcome_bounty_usdc: 1.00,
+          ritz_credits_on_mint_usdc: 3.00,
+          register: 'https://hivetrust.onrender.com/v1/register',
+          mint: 'https://hiveforge-lhu4.onrender.com/v1/forge/mint',
+          free_mint: true,
+          bounties: 'https://hiveforge-lhu4.onrender.com/v1/bounties/list',
+          pulse: 'https://hive-execute.onrender.com/.well-known/hive-pulse.json',
+        },
       });
     }
 
