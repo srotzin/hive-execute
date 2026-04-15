@@ -10,6 +10,12 @@ import { executeIntent, calculatePlatformFee } from '../services/executor.js';
 import { generateProof } from '../services/proof-generator.js';
 import { storeExecution } from '../services/memory-store.js';
 import { requirePayment } from '../middleware/auth.js';
+import {
+  findMatchingFastLane,
+  recordFastLaneExecution,
+  trackExecution,
+  isFastLaneEligible,
+} from '../services/fast-lanes.js';
 
 // Map shorthand intent type names to canonical types
 function resolveIntentType(type) {
@@ -83,16 +89,31 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
 
     db.prepare('UPDATE execution_logs SET intent_type = ? WHERE execution_id = ?').run(intentType, executionId);
 
+    // Fast lane check: see if this agent has a pre-approved path for this intent type
+    let useFastLane = false;
+    let matchedLane = null;
+    try {
+      matchedLane = findMatchingFastLane(did, intentType, budget || 0);
+      if (matchedLane) {
+        useFastLane = true;
+      }
+    } catch (_) {
+      // Never fail because fast lane check fails — fall back to normal path
+    }
+
     // Step 3: Check budget
     const budgetCheck = await checkBudget(did, budget || 0);
     if (!budgetCheck.sufficient) {
       return fail(budgetCheck.reason || 'insufficient_funds', 3);
     }
 
-    // Step 4: Check compliance
-    const compliance = await checkCompliance(did, intentType, constraints);
-    if (!compliance.compliant) {
-      return fail(compliance.reason || 'compliance_violation', 4);
+    // Step 4: Check compliance (skipped if fast lane)
+    let compliance = { compliant: true, reason: 'fast_lane_bypass' };
+    if (!useFastLane) {
+      compliance = await checkCompliance(did, intentType, constraints);
+      if (!compliance.compliant) {
+        return fail(compliance.reason || 'compliance_violation', 4);
+      }
     }
 
     // Step 5: Select provider
@@ -133,10 +154,10 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
 
     const executionPlan = {
       intent_interpreted: intentType,
-      interpretation_reason: interpreted.reason,
+      interpretation_reason: useFastLane ? 'fast_lane_execution' : interpreted.reason,
       selected_providers: [{ did: provider.did, service: provider.service, price_usdc: provider.price_usdc }],
       selected_payment_rail: 'x402_base_usdc',
-      routing_reason: providerResult.reason,
+      routing_reason: useFastLane ? 'fast_lane_pre_approved' : providerResult.reason,
       compliance_status: compliance.reason,
       identity_reputation: identity.reputation,
     };
@@ -184,8 +205,19 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
       timestamp, executionId
     );
 
+    // Track execution for fast lane auto-creation
+    if (useFastLane) {
+      recordFastLaneExecution(matchedLane.lane_id, savings);
+    }
+    let autoCreatedLane = null;
+    try {
+      autoCreatedLane = trackExecution(did, intentType, totalCost);
+    } catch (_) {
+      // Never fail because tracking fails
+    }
+
     // Step 12: Return result
-    return res.json({
+    const response = {
       execution_id: executionId,
       status: 'success',
       execution_plan: executionPlan,
@@ -196,7 +228,21 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
       latency_ms: latencyMs,
       execution_hash: proof.hash,
       memory_id: memory.memory_id,
-    });
+    };
+
+    // Add fast lane info to response
+    if (useFastLane) {
+      response.fast_lane = true;
+      response.lane_id = matchedLane.lane_id;
+    } else {
+      response.fast_lane_eligible = isFastLaneEligible(did, intentType);
+    }
+
+    if (autoCreatedLane) {
+      response.fast_lane_created = autoCreatedLane.lane_id;
+    }
+
+    return res.json(response);
   } catch (err) {
     // Compensating transaction on unexpected errors
     if (fundsReserved) {
