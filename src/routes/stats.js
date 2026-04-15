@@ -2,6 +2,7 @@ import { Router } from 'express';
 import db from '../services/db.js';
 import { requirePayment } from '../middleware/auth.js';
 import { getFastLaneStats } from '../services/fast-lanes.js';
+import { getRepeatStats } from '../services/repeat-detector.js';
 
 const router = Router();
 
@@ -33,6 +34,7 @@ router.get('/v1/execute_intent/stats', requirePayment('stats'), (_req, res) => {
   ).get().avg;
 
   const fastLaneStats = getFastLaneStats();
+  const repeatStats = getRepeatStats();
 
   res.json({
     total_executions: global?.total_executions || 0,
@@ -49,6 +51,9 @@ router.get('/v1/execute_intent/stats', requirePayment('stats'), (_req, res) => {
     active_fast_lanes: fastLaneStats.active_fast_lanes,
     auto_created_lanes: fastLaneStats.auto_created_lanes,
     manually_created_lanes: fastLaneStats.manually_created_lanes,
+    repeat_executions: repeatStats.repeat_executions,
+    repeat_savings_usdc: repeatStats.repeat_savings_usdc,
+    top_patterns: repeatStats.top_patterns,
   });
 });
 

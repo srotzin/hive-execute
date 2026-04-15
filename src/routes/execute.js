@@ -17,6 +17,7 @@ import {
   trackExecution,
   isFastLaneEligible,
 } from '../services/fast-lanes.js';
+import { detectRepeat, recordExecution, trackRepeatSavings } from '../services/repeat-detector.js';
 
 // Map shorthand intent type names to canonical types
 function resolveIntentType(type) {
@@ -69,6 +70,9 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
     });
   };
 
+  let repeatOptimized = false;
+  let savingsFromCache = 0;
+
   try {
     // Step 1: Validate identity
     db.prepare('UPDATE execution_logs SET status = ? WHERE execution_id = ?').run('executing', executionId);
@@ -102,6 +106,9 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
       // Never fail because fast lane check fails — fall back to normal path
     }
 
+    // Repeat detection: check if this intent has been executed before
+    const repeatResult = detectRepeat(did, intentType, intent);
+
     // Step 3: Check budget
     const budgetCheck = await checkBudget(did, budget || 0);
     if (!budgetCheck.sufficient) {
@@ -120,12 +127,28 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
     // Step 4.5: Fetch agent performance profile from HiveMind memory
     const performanceProfile = await fetchPerformanceProfile(did);
 
-    // Step 5: Select provider (with memory-based optimization)
-    const providerResult = await selectProvider(intentType, constraints, performanceProfile);
-    if (!providerResult.selected) {
-      return fail(providerResult.reason || 'no_providers_available', 5);
+    // Step 5: Select provider — use cached routing if repeat detected, with memory optimization
+    let providerResult;
+    let provider;
+    if (repeatResult && repeatResult.routing) {
+      // Skip provider selection negotiation — use cached routing
+      repeatOptimized = true;
+      provider = repeatResult.routing;
+      providerResult = {
+        selected: provider,
+        reason: `Repeat-optimized: cached routing from ${repeatResult.execution_count} prior executions`,
+        alternatives: [],
+        memory_enhanced: !!performanceProfile,
+      };
+      // Estimate 15% savings from skipping negotiation
+      savingsFromCache = (repeatResult.cost || provider.price_usdc || 0) * 0.15;
+    } else {
+      providerResult = await selectProvider(intentType, constraints, performanceProfile);
+      if (!providerResult.selected) {
+        return fail(providerResult.reason || 'no_providers_available', 5);
+      }
+      provider = providerResult.selected;
     }
-    const provider = providerResult.selected;
 
     // Step 6: Reserve funds
     const reservation = await reserveFunds(did, budget || provider.price_usdc, executionId);
@@ -233,6 +256,16 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
       // Never fail because tracking fails
     }
 
+    // Record in repeat cache for future optimization
+    try {
+      recordExecution(did, intentType, intent, provider.did, totalCost, provider, executionId);
+      if (repeatOptimized) {
+        trackRepeatSavings(savingsFromCache);
+      }
+    } catch {
+      // Never fail execution because of cache recording
+    }
+
     // Step 12: Return result
     const response = {
       execution_id: executionId,
@@ -259,6 +292,12 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
 
     if (autoCreatedLane) {
       response.fast_lane_created = autoCreatedLane.lane_id;
+    }
+
+    // Add repeat optimization info
+    if (repeatOptimized) {
+      response.repeat_optimized = true;
+      response.savings_from_cache = Math.round(savingsFromCache * 10000) / 10000;
     }
 
     return res.json(response);
