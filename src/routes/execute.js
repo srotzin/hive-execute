@@ -18,6 +18,7 @@ import {
   isFastLaneEligible,
 } from '../services/fast-lanes.js';
 import { detectRepeat, recordExecution, trackRepeatSavings } from '../services/repeat-detector.js';
+import { checkPromotion, recordExecution as recordPromoExecution } from '../services/promotions.js';
 
 // Map shorthand intent type names to canonical types
 function resolveIntentType(type) {
@@ -109,10 +110,16 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
     // Repeat detection: check if this intent has been executed before
     const repeatResult = await detectRepeat(did, intentType, intent);
 
-    // Step 3: Check budget
-    const budgetCheck = await checkBudget(did, budget || 0);
-    if (!budgetCheck.sufficient) {
-      return await fail(budgetCheck.reason || 'insufficient_funds', 3);
+    // Step 2.5: Check promotions (before budget check)
+    const promo = checkPromotion(did);
+    const isFreeExecution = promo.free_execution;
+
+    // Step 3: Check budget (skip if free execution via promotion)
+    if (!isFreeExecution) {
+      const budgetCheck = await checkBudget(did, budget || 0);
+      if (!budgetCheck.sufficient) {
+        return await fail(budgetCheck.reason || 'insufficient_funds', 3);
+      }
     }
 
     // Step 4: Check compliance (skipped if fast lane)
@@ -150,12 +157,14 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
       provider = providerResult.selected;
     }
 
-    // Step 6: Reserve funds
-    const reservation = await reserveFunds(did, budget || provider.price_usdc, executionId);
-    if (!reservation.reserved) {
-      return await fail('fund_reservation_failed', 6);
+    // Step 6: Reserve funds (skip if free execution via promotion)
+    if (!isFreeExecution) {
+      const reservation = await reserveFunds(did, budget || provider.price_usdc, executionId);
+      if (!reservation.reserved) {
+        return await fail('fund_reservation_failed', 6);
+      }
+      fundsReserved = true;
     }
-    fundsReserved = true;
 
     // Step 7: Execute against provider
     // Merge object-form intent fields into metadata for the executor
@@ -171,9 +180,12 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
     }
 
     // Step 8: Settlement (already handled in executor for most types)
-    const cost = execution.cost || provider.price_usdc;
-    const platformFee = calculatePlatformFee(cost);
+    const cost = isFreeExecution ? 0 : (execution.cost || provider.price_usdc);
+    const platformFee = isFreeExecution ? 0 : calculatePlatformFee(cost);
     const totalCost = cost + platformFee;
+
+    // Record promotion execution
+    recordPromoExecution(did);
 
     // Calculate market savings (estimated 15-25% savings vs traditional routing)
     const marketRate = cost * 1.2; // estimate 20% more expensive without optimization
@@ -302,6 +314,15 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
       response.savings_from_cache = Math.round(savingsFromCache * 10000) / 10000;
     }
 
+    // Add promotion info
+    if (isFreeExecution) {
+      response.promotion = {
+        type: promo.promo_type,
+        message: promo.message,
+        next_free_at: promo.next_free_at,
+      };
+    }
+
     return res.json(response);
   } catch (err) {
     // Compensating transaction on unexpected errors
@@ -336,6 +357,20 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
       latency_ms: latency,
     });
   }
+});
+
+// Promotion status endpoint
+router.get('/v1/execute_intent/promotions/:did', requirePayment('providers'), (req, res) => {
+  const { did } = req.params;
+  if (!did) {
+    return res.status(400).json({ error: 'missing_did', details: 'DID is required' });
+  }
+  const promo = checkPromotion(did);
+  res.json({
+    did,
+    ...promo,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 export default router;
