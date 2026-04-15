@@ -5,6 +5,7 @@ import executeRouter from './routes/execute.js';
 import historyRouter from './routes/history.js';
 import statsRouter from './routes/stats.js';
 import providersRouter from './routes/providers.js';
+import fastLanesRouter from './routes/fast-lanes.js';
 import performanceRouter from './routes/performance.js';
 import db from './services/db.js';
 
@@ -68,6 +69,24 @@ app.get('/', (_req, res) => {
         method: 'GET',
         path: '/v1/execute_intent/providers',
         description: 'Available providers by intent type',
+        auth: 'x402 payment or x-hive-internal-key',
+      },
+fast_lane_register: {
+        method: 'POST',
+        path: '/v1/execute_intent/fast-lane/register',
+        description: 'Register a pre-approved fast lane for common operations',
+        auth: 'x402 payment or x-hive-internal-key',
+      },
+      fast_lane_list: {
+        method: 'GET',
+        path: '/v1/execute_intent/fast-lane/{did}',
+        description: 'List active fast lanes for an agent',
+        auth: 'x402 payment or x-hive-internal-key',
+      },
+      fast_lane_execute: {
+        method: 'POST',
+        path: '/v1/execute_intent/fast-lane/{lane_id}/execute',
+        description: 'Execute through a pre-approved fast lane (ultra-fast path)',
         auth: 'x402 payment or x-hive-internal-key',
       },
       performance: {
@@ -202,6 +221,7 @@ app.use(executeRouter);
 app.use(historyRouter);
 app.use(statsRouter);
 app.use(providersRouter);
+app.use(fastLanesRouter);
 app.use(performanceRouter);
 
 // --- Velocity Doctrine endpoints ---

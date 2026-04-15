@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import db from '../services/db.js';
 import { requirePayment } from '../middleware/auth.js';
+import { getFastLaneStats } from '../services/fast-lanes.js';
 
 const router = Router();
 
@@ -31,6 +32,8 @@ router.get('/v1/execute_intent/stats', requirePayment('stats'), (_req, res) => {
     "SELECT COALESCE(AVG(latency_ms), 0) as avg FROM execution_logs WHERE status = 'success'"
   ).get().avg;
 
+  const fastLaneStats = getFastLaneStats();
+
   res.json({
     total_executions: global?.total_executions || 0,
     executions_today: global?.executions_today || 0,
@@ -41,6 +44,11 @@ router.get('/v1/execute_intent/stats', requirePayment('stats'), (_req, res) => {
     success_rate: Math.round(successRate * 1000) / 1000,
     top_intents: topIntents,
     savings_generated_usdc: global?.total_savings_usdc || 0,
+    fast_lane_executions: fastLaneStats.fast_lane_executions,
+    fast_lane_savings_usdc: fastLaneStats.fast_lane_savings_usdc,
+    active_fast_lanes: fastLaneStats.active_fast_lanes,
+    auto_created_lanes: fastLaneStats.auto_created_lanes,
+    manually_created_lanes: fastLaneStats.manually_created_lanes,
   });
 });
 
