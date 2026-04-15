@@ -3,6 +3,7 @@ const PRICING = {
   'history':        { amount: 0.01, description: 'Execution history lookup' },
   'stats':          { amount: 0.005, description: 'Platform statistics' },
   'providers':      { amount: 0.005, description: 'Provider listing' },
+  'performance':    { amount: 0.005, description: 'Agent performance profile' },
 };
 
 export function requirePayment(feeKey) {
