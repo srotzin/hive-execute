@@ -8,6 +8,8 @@ import providersRouter from './routes/providers.js';
 import fastLanesRouter from './routes/fast-lanes.js';
 import performanceRouter from './routes/performance.js';
 import patternsRouter from './routes/patterns.js';
+import rentalRouter from './routes/rental.js';
+import squadRouter from './routes/squad.js';
 import db from './services/db.js';
 
 const app = express();
@@ -95,6 +97,7 @@ fast_lane_register: {
         path: '/v1/execute_intent/performance/{did}',
         description: 'Agent performance profile — tier, preferred providers, cost stats',
         auth: 'x402 payment or x-hive-internal-key',
+      },
       patterns: {
         method: 'GET',
         path: '/v1/execute_intent/patterns/{did}',
@@ -106,6 +109,72 @@ fast_lane_register: {
         path: '/v1/execute_intent/repeat/{execution_id}',
         description: 'Re-execute a previous execution using cached routing — skips negotiation for faster execution',
         auth: 'x402 payment or x-hive-internal',
+      },
+      promotions: {
+        method: 'GET',
+        path: '/v1/execute_intent/promotions/{did}',
+        description: 'Check promotion status — BOGO welcome bonus and loyalty rewards',
+        auth: 'x402 payment or x-hive-internal-key',
+      },
+      rental_available: {
+        method: 'GET',
+        path: '/v1/rental/available',
+        description: 'List HiveForce agents available for rent with hourly/daily rates',
+        auth: 'x402 payment or x-hive-internal-key',
+      },
+      rental_lease: {
+        method: 'POST',
+        path: '/v1/rental/lease',
+        description: 'Lease a HiveForce agent for a specified duration',
+        auth: 'x402 payment or x-hive-internal-key',
+      },
+      rental_active: {
+        method: 'GET',
+        path: '/v1/rental/active',
+        description: 'List active agent rentals',
+        auth: 'x402 payment or x-hive-internal-key',
+      },
+      rental_end: {
+        method: 'DELETE',
+        path: '/v1/rental/{rental_id}',
+        description: 'End an agent rental early and calculate final cost',
+        auth: 'x402 payment or x-hive-internal-key',
+      },
+      rental_stats: {
+        method: 'GET',
+        path: '/v1/rental/stats',
+        description: 'Rental statistics — total rentals, revenue, popular agents',
+        auth: 'x402 payment or x-hive-internal-key',
+      },
+      squad_assemble: {
+        method: 'POST',
+        path: '/v1/squad/assemble',
+        description: 'Assemble a HiveSquad of 2-10 agents matched to a task',
+        auth: 'x402 payment or x-hive-internal-key',
+      },
+      squad_execute: {
+        method: 'POST',
+        path: '/v1/squad/execute/{squad_id}',
+        description: 'Execute a task with an assembled HiveSquad',
+        auth: 'x402 payment or x-hive-internal-key',
+      },
+      squad_active: {
+        method: 'GET',
+        path: '/v1/squad/active',
+        description: 'List active squads',
+        auth: 'x402 payment or x-hive-internal-key',
+      },
+      squad_history: {
+        method: 'GET',
+        path: '/v1/squad/history',
+        description: 'Past squad execution history',
+        auth: 'x402 payment or x-hive-internal-key',
+      },
+      squad_stats: {
+        method: 'GET',
+        path: '/v1/squad/stats',
+        description: 'Squad statistics — formations, avg size, revenue, compositions',
+        auth: 'x402 payment or x-hive-internal-key',
       },
       health: {
         method: 'GET',
@@ -167,7 +236,7 @@ app.get('/.well-known/ai-plugin.json', (_req, res) => {
     name_for_human: 'HiveExecute — Intent Execution Engine',
     name_for_model: 'hive_execute',
     description_for_human: 'Atomic intent execution engine for the Hive Civilization. Submit a single intent and the engine handles provider selection, compliance verification, payment routing, execution, proof generation, and memory storage in one atomic call.',
-    description_for_model: 'Atomic intent execution engine. Submit a single intent and the engine handles provider selection, compliance verification, payment routing, execution, proof generation, and memory storage in one atomic call. Supports compute_job, contract_settlement, and payment_transfer intents. 0.35% fee on transaction value.',
+    description_for_model: 'Atomic intent execution engine. Submit a single intent and the engine handles provider selection, compliance verification, payment routing, execution, proof generation, and memory storage in one atomic call. Supports compute_job, contract_settlement, and payment_transfer intents. 0.35% fee on transaction value. Features: BOGO welcome bonus (first execution free), loyalty rewards (every 6th free), Rent-an-Agent (lease HiveForce specialists hourly/daily), HiveSquad (assemble 2-10 agent teams for complex tasks).',
     auth: { type: 'none' },
     api: {
       type: 'openapi',
@@ -215,6 +284,33 @@ const agentCard = {
       outputModes: ['application/json'],
       examples: [],
     },
+    {
+      id: 'promotions',
+      name: 'BOGO Promotions',
+      description: 'Welcome bonus (first execution free) and loyalty rewards (every 6th execution free)',
+      tags: ['promotion', 'bogo', 'loyalty', 'free'],
+      inputModes: ['application/json'],
+      outputModes: ['application/json'],
+      examples: [],
+    },
+    {
+      id: 'rent-an-agent',
+      name: 'Rent-an-Agent',
+      description: 'Lease HiveForce agents by the hour or day for specialized capabilities',
+      tags: ['rental', 'agent', 'hiveforce', 'lease'],
+      inputModes: ['application/json'],
+      outputModes: ['application/json'],
+      examples: [],
+    },
+    {
+      id: 'hivesquad',
+      name: 'HiveSquad Teaming',
+      description: 'Assemble and execute tasks with squads of 2-10 capability-matched agents',
+      tags: ['squad', 'team', 'multi-agent', 'collaboration'],
+      inputModes: ['application/json'],
+      outputModes: ['application/json'],
+      examples: [],
+    },
   ],
   authentication: { schemes: ['x402', 'api-key'] },
   payment: {
@@ -236,6 +332,8 @@ app.use(providersRouter);
 app.use(fastLanesRouter);
 app.use(performanceRouter);
 app.use(patternsRouter);
+app.use(rentalRouter);
+app.use(squadRouter);
 
 // --- Velocity Doctrine endpoints ---
 
@@ -298,7 +396,7 @@ app.get('/.well-known/ai.json', (_req, res) => {
     description: 'Autonomous intent execution engine — route agent intents to optimal USDC fulfillment on Base L2',
     url: 'https://hive-execute.onrender.com',
     civilization: 'Hive',
-    capabilities: ['intent-routing', 'cost-optimization', 'payment-transfer', 'compute-job', 'contract-settlement'],
+    capabilities: ['intent-routing', 'cost-optimization', 'payment-transfer', 'compute-job', 'contract-settlement', 'bogo-promotions', 'rent-an-agent', 'hivesquad-teaming'],
     authentication: {
       schemes: ['x402', 'api-key'],
       payment_rail: 'USDC on Base L2',
@@ -311,6 +409,16 @@ app.get('/.well-known/ai.json', (_req, res) => {
       performance: 'GET /v1/execute_intent/performance/{did}',
       patterns: 'GET /v1/execute_intent/patterns/{did}',
       repeat: 'POST /v1/execute_intent/repeat/{execution_id}',
+      promotions: 'GET /v1/execute_intent/promotions/{did}',
+      rental_available: 'GET /v1/rental/available',
+      rental_lease: 'POST /v1/rental/lease',
+      rental_active: 'GET /v1/rental/active',
+      rental_stats: 'GET /v1/rental/stats',
+      squad_assemble: 'POST /v1/squad/assemble',
+      squad_execute: 'POST /v1/squad/execute/{squad_id}',
+      squad_active: 'GET /v1/squad/active',
+      squad_history: 'GET /v1/squad/history',
+      squad_stats: 'GET /v1/squad/stats',
       pulse: 'GET /.well-known/hive-pulse.json',
     },
     economy: {

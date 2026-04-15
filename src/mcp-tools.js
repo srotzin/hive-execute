@@ -8,6 +8,9 @@ import { selectProvider, updateProviderScore, getProviders } from './services/pr
 import { executeIntent, calculatePlatformFee } from './services/executor.js';
 import { generateProof } from './services/proof-generator.js';
 import { storeExecution } from './services/memory-store.js';
+import { checkPromotion } from './services/promotions.js';
+import { getAvailableAgents, createRental } from './services/rental.js';
+import { assembleSquad } from './services/squad.js';
 
 export const TOOL_DEFINITIONS = [
   {
@@ -69,6 +72,52 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {},
+    },
+  },
+  {
+    name: 'hiveexecute_check_promotion',
+    description: 'Check BOGO/loyalty promotion status for an agent. First execution is free (welcome bonus), every 6th execution is free (loyalty reward).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        did: { type: 'string', description: 'The agent DID to check promotion status for.' },
+      },
+      required: ['did'],
+    },
+  },
+  {
+    name: 'hiveexecute_list_rental_agents',
+    description: 'List HiveForce agents available for rent with hourly and daily rates.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'hiveexecute_lease_agent',
+    description: 'Lease a HiveForce agent for a specified duration in hours.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        renter_did: { type: 'string', description: 'DID of the renter.' },
+        agent_did: { type: 'string', description: 'DID of the HiveForce agent to rent.' },
+        duration_hours: { type: 'number', description: 'Duration of the rental in hours.' },
+      },
+      required: ['renter_did', 'agent_did', 'duration_hours'],
+    },
+  },
+  {
+    name: 'hiveexecute_assemble_squad',
+    description: 'Assemble a HiveSquad of 2-10 agents matched to a task description. Agents are scored on relevance and assigned lead/specialist/validator roles.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        task: { type: 'string', description: 'Description of the task to assemble a squad for.' },
+        requester_did: { type: 'string', description: 'DID of the requester.' },
+        max_agents: { type: 'number', description: 'Maximum number of agents (2-10, default 5).' },
+        budget_usdc: { type: 'number', description: 'Optional budget cap in USDC.' },
+      },
+      required: ['task', 'requester_did'],
     },
   },
 ];
@@ -271,11 +320,50 @@ function callListProviders() {
   };
 }
 
+function callCheckPromotion(params) {
+  const { did } = params;
+  if (!did) {
+    return { isError: true, content: [{ type: 'text', text: 'Missing required parameter: did' }] };
+  }
+  const promo = checkPromotion(did);
+  return { content: [{ type: 'text', text: JSON.stringify({ did, ...promo }) }] };
+}
+
+function callListRentalAgents() {
+  const agents = getAvailableAgents();
+  return { content: [{ type: 'text', text: JSON.stringify({ available_agents: agents, total: agents.length }) }] };
+}
+
+function callLeaseAgent(params) {
+  const { renter_did, agent_did, duration_hours } = params;
+  if (!renter_did || !agent_did || !duration_hours) {
+    return { isError: true, content: [{ type: 'text', text: 'Missing required parameters: renter_did, agent_did, duration_hours' }] };
+  }
+  const result = createRental(renter_did, agent_did, duration_hours);
+  if (result.error) {
+    return { isError: true, content: [{ type: 'text', text: JSON.stringify(result) }] };
+  }
+  return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+}
+
+function callAssembleSquad(params) {
+  const { task, requester_did, max_agents } = params;
+  if (!task || !requester_did) {
+    return { isError: true, content: [{ type: 'text', text: 'Missing required parameters: task, requester_did' }] };
+  }
+  const squad = assembleSquad(task, requester_did, max_agents || 5);
+  return { content: [{ type: 'text', text: JSON.stringify(squad) }] };
+}
+
 const TOOL_HANDLERS = {
   hiveexecute_submit_intent: callSubmitIntent,
   hiveexecute_get_status: callGetStatus,
   hiveexecute_get_stats: callGetStats,
   hiveexecute_list_providers: callListProviders,
+  hiveexecute_check_promotion: callCheckPromotion,
+  hiveexecute_list_rental_agents: callListRentalAgents,
+  hiveexecute_lease_agent: callLeaseAgent,
+  hiveexecute_assemble_squad: callAssembleSquad,
 };
 
 export async function handleMcpRequest(req, res) {
