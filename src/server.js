@@ -7,6 +7,7 @@ import statsRouter from './routes/stats.js';
 import providersRouter from './routes/providers.js';
 import fastLanesRouter from './routes/fast-lanes.js';
 import performanceRouter from './routes/performance.js';
+import patternsRouter from './routes/patterns.js';
 import db from './services/db.js';
 
 const app = express();
@@ -94,6 +95,17 @@ fast_lane_register: {
         path: '/v1/execute_intent/performance/{did}',
         description: 'Agent performance profile — tier, preferred providers, cost stats',
         auth: 'x402 payment or x-hive-internal-key',
+      patterns: {
+        method: 'GET',
+        path: '/v1/execute_intent/patterns/{did}',
+        description: 'Detected execution patterns and repeat optimization stats for an agent',
+        auth: 'x402 payment or x-hive-internal-key',
+      },
+      repeat: {
+        method: 'POST',
+        path: '/v1/execute_intent/repeat/{execution_id}',
+        description: 'Re-execute a previous execution using cached routing — skips negotiation for faster execution',
+        auth: 'x402 payment or x-hive-internal',
       },
       health: {
         method: 'GET',
@@ -223,6 +235,7 @@ app.use(statsRouter);
 app.use(providersRouter);
 app.use(fastLanesRouter);
 app.use(performanceRouter);
+app.use(patternsRouter);
 
 // --- Velocity Doctrine endpoints ---
 
@@ -296,6 +309,8 @@ app.get('/.well-known/ai.json', (_req, res) => {
       history: 'GET /v1/execute_intent/history/{did}',
       providers: 'GET /v1/execute_intent/providers',
       performance: 'GET /v1/execute_intent/performance/{did}',
+      patterns: 'GET /v1/execute_intent/patterns/{did}',
+      repeat: 'POST /v1/execute_intent/repeat/{execution_id}',
       pulse: 'GET /.well-known/hive-pulse.json',
     },
     economy: {
