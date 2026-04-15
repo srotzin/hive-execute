@@ -11,7 +11,7 @@ export function requirePayment(feeKey) {
     if (!pricing) return next();
 
     // Internal key bypass — Hive services skip payment
-    const internalKey = req.headers['x-hive-internal-key'] || req.headers['x-api-key'];
+    const internalKey = req.headers['x-hive-internal-key'] || req.headers['x-hive-internal'] || req.headers['x-api-key'];
     const expectedKey = process.env.HIVE_INTERNAL_KEY || process.env.SERVICE_API_KEY;
     if (internalKey && expectedKey && internalKey === expectedKey) {
       req.paymentVerified = true;

@@ -11,17 +11,30 @@ import { generateProof } from '../services/proof-generator.js';
 import { storeExecution } from '../services/memory-store.js';
 import { requirePayment } from '../middleware/auth.js';
 
+// Map shorthand intent type names to canonical types
+function resolveIntentType(type) {
+  const t = (type || '').toLowerCase().trim();
+  if (['transfer', 'pay', 'send', 'payment', 'payment_transfer'].includes(t)) return 'payment_transfer';
+  if (['settle', 'settlement', 'contract', 'contract_settlement'].includes(t)) return 'contract_settlement';
+  if (['compute', 'compute_job', 'run', 'execute'].includes(t)) return 'compute_job';
+  return null;
+}
+
 const router = Router();
 
 router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, res) => {
   const startTime = Date.now();
   const executionId = 'exec_' + uuidv4().replace(/-/g, '').slice(0, 20);
-  const { did, intent, constraints, budget, metadata } = req.body;
+  const { did, intent, constraints, metadata } = req.body;
+  const budget = req.body.budget || (typeof intent === 'object' ? intent.amount_usdc : undefined);
 
   // Validate input
   if (!did || !intent) {
     return res.status(400).json({ error: 'missing_required_fields', details: 'did and intent are required' });
   }
+
+  // Normalize intent to a string for DB storage and interpretation
+  const intentString = typeof intent === 'string' ? intent : JSON.stringify(intent);
 
   const now = new Date().toISOString();
   let stepFailed = 0;
@@ -31,7 +44,7 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
   db.prepare(`
     INSERT INTO execution_logs (execution_id, did, intent, constraints, budget_usdc, status, created_at)
     VALUES (?, ?, ?, ?, ?, 'pending', ?)
-  `).run(executionId, did, intent, JSON.stringify(constraints || {}), budget || 0, now);
+  `).run(executionId, did, intentString, JSON.stringify(constraints || {}), budget || 0, now);
 
   const fail = (reason, step) => {
     const latency = Date.now() - startTime;
@@ -59,7 +72,10 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
     }
 
     // Step 2: Interpret intent
-    const interpreted = interpretIntent(intent);
+    // Support object-form intents with a "type" field (e.g. {"type":"transfer",...})
+    const interpreted = typeof intent === 'object' && intent.type
+      ? { type: resolveIntentType(intent.type), reason: `Object intent type: "${intent.type}"` }
+      : interpretIntent(intentString);
     if (!interpreted.type) {
       return fail('unrecognized_intent', 2);
     }
@@ -94,7 +110,11 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
     fundsReserved = true;
 
     // Step 7: Execute against provider
-    const execution = await executeIntent(intentType, provider, did, constraints, metadata);
+    // Merge object-form intent fields into metadata for the executor
+    const execMetadata = typeof intent === 'object'
+      ? { ...metadata, recipient_did: intent.to, amount_usdc: intent.amount_usdc, ...intent }
+      : metadata;
+    const execution = await executeIntent(intentType, provider, did, constraints, execMetadata);
     if (!execution.success) {
       // Compensating transaction: release reserved funds
       await releaseFunds(did, budget || provider.price_usdc, executionId);
@@ -129,7 +149,7 @@ router.post('/v1/execute_intent', requirePayment('execute_intent'), async (req, 
 
     // Step 9: Generate proof
     const timestamp = new Date().toISOString();
-    const proof = generateProof(executionId, did, intent, result, totalCost, timestamp);
+    const proof = generateProof(executionId, did, intentString, result, totalCost, timestamp);
 
     // Step 10: Store memory
     const memory = await storeExecution(executionId, did, intentType, executionPlan, result, totalCost);
