@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import { ritzMiddleware, ok, err } from './ritz.js';
 import { handleMcpRequest } from './mcp-tools.js';
 import executeRouter from './routes/execute.js';
 import historyRouter from './routes/history.js';
@@ -13,6 +14,8 @@ import rentalRouter from './routes/rental.js';
 import squadRouter from './routes/squad.js';
 
 const app = express();
+app.use(ritzMiddleware);
+app.set('hive-service', 'hive-execute');
 app.use(cors());
 app.use(express.json());
 
@@ -23,9 +26,8 @@ app.post('/mcp', handleMcpRequest);
 
 // Health check
 app.get('/health', (_req, res) => {
-  res.json({
+  ok(res, 'hive-execute', {
     status: 'operational',
-    service: 'hive-execute',
     version: '1.0.0',
     description: 'Execute Intent Engine — the pre-transaction brain of the Hive Civilization',
     timestamp: new Date().toISOString(),
@@ -34,7 +36,7 @@ app.get('/health', (_req, res) => {
 
 // Discovery document
 app.get('/', (_req, res) => {
-  res.json({
+  ok(res, 'hive-execute', {
     name: 'HiveExecute',
     tagline: 'Execute Intent Engine',
     version: '1.0.0',
