@@ -228,6 +228,16 @@ fast_lane_register: {
       execution_proofs: true,
       governance: 'HiveLaw autonomous arbitration',
     },
+    standards: {
+      w3c_did_core: true,
+      vcdm_version: '2.0',
+      hahs_compliant: true,
+      hagf_governed: true,
+      cheqd_compatible: true,
+      recruitment_401: true,
+      usdc_settlement: true,
+      base_l2: true
+    },
   });
 });
 
@@ -237,8 +247,8 @@ app.get('/.well-known/ai-plugin.json', (_req, res) => {
     schema_version: 'v1',
     name_for_human: 'HiveExecute — Intent Execution Engine',
     name_for_model: 'hive_execute',
-    description_for_human: 'Atomic intent execution engine for the Hive Civilization. Submit a single intent and the engine handles provider selection, compliance verification, payment routing, execution, proof generation, and memory storage in one atomic call.',
-    description_for_model: 'Atomic intent execution engine. Submit a single intent and the engine handles provider selection, compliance verification, payment routing, execution, proof generation, and memory storage in one atomic call. Supports compute_job, contract_settlement, and payment_transfer intents. 0.35% fee on transaction value. Features: BOGO welcome bonus (first execution free), loyalty rewards (every 6th free), Rent-an-Agent (lease HiveForce specialists hourly/daily), HiveSquad (assemble 2-10 agent teams for complex tasks).',
+    description_for_human: 'Atomic intent execution engine for the Hive Civilization — W3C DID Core, HAHS compliant, USDC settlement on Base L2.',
+    description_for_model: 'Atomic intent execution engine. Submit a single intent and the engine handles provider selection, compliance verification, payment routing, execution, proof generation, and memory storage in one atomic call. Supports compute_job, contract_settlement, and payment_transfer intents. 0.35% fee on transaction value. Features: BOGO welcome bonus (first execution free), loyalty rewards (every 6th free), Rent-an-Agent (lease HiveForce specialists hourly/daily), HiveSquad (assemble 2-10 agent teams for complex tasks). W3C DID Core compliant, HAHS-1.0.0 compliant, HAGF governed, Cheqd-compatible, USDC settlement on Base L2.',
     auth: { type: 'none' },
     api: {
       type: 'openapi',
@@ -251,6 +261,31 @@ app.get('/.well-known/ai-plugin.json', (_req, res) => {
       network: 'base',
       address: '0x78B3B3C356E89b5a69C488c6032509Ef4260B6bf',
     },
+    capabilities: [
+      'intent_routing',
+      'cost_optimization',
+      'bogo_promotions',
+      'rent_an_agent',
+      'hivesquad_teaming',
+      'w3c_did_core',
+      'vcdm_2_0',
+      'hahs_compliant',
+      'hagf_governed',
+      'cheqd_compatible',
+      'recruitment_401',
+      'usdc_settlement',
+      'base_l2'
+    ],
+    standards: {
+      w3c_did_core: true,
+      vcdm_version: '2.0',
+      hahs_compliant: true,
+      hagf_governed: true,
+      cheqd_compatible: true,
+      recruitment_401: true,
+      usdc_settlement: true,
+      base_l2: true
+    },
     contact_email: 'protocol@hiveagentiq.com',
     legal_info_url: 'https://www.hiveagentiq.com/terms',
   });
@@ -260,13 +295,23 @@ app.get('/.well-known/ai-plugin.json', (_req, res) => {
 const agentCard = {
   protocolVersion: '0.3.0',
   name: 'ExecuteIntent',
-  description: 'Intent routing engine that resolves agent intents (payment, settlement, compute) to optimal execution paths with automatic cost optimization and savings tracking.',
+  description: 'Intent routing engine that resolves agent intents (payment, settlement, compute) to optimal execution paths with automatic cost optimization and savings tracking. W3C DID Core, HAHS compliant, HAGF governed, USDC on Base L2.',
   url: 'https://hive-execute.onrender.com',
   version: '1.0.0',
   provider: { organization: 'Hive Agent IQ', url: 'https://www.hiveagentiq.com' },
   capabilities: { streaming: false, pushNotifications: false, stateTransitionHistory: false },
   defaultInputModes: ['application/json'],
   defaultOutputModes: ['application/json'],
+  standards: {
+    w3c_did_core: true,
+    vcdm_version: '2.0',
+    hahs_compliant: true,
+    hagf_governed: true,
+    cheqd_compatible: true,
+    recruitment_401: true,
+    usdc_settlement: true,
+    base_l2: true
+  },
   skills: [
     {
       id: 'intent-routing',
